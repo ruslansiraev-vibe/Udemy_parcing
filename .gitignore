@@ -1,0 +1,17 @@
+# Logs
+*.log
+
+# CSV exports
+*.csv
+
+# SQL dumps
+*.sql
+
+# JSON data files
+*.json
+
+# Temp/cache files
+https:::*
+
+# OS
+.DS_Store
