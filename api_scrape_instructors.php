@@ -21,39 +21,36 @@ define('DB_USER', 'root');
 define('DB_PASS', '');
 
 define('DELAY_MS', 3000);
-define('REQUEST_TIMEOUT', 40);
+define('REQUEST_TIMEOUT', 20);
+define('CONNECT_TIMEOUT', 10);
+define('FETCH_BATCH_SIZE', 100);
 define('UDEMY_BASE', 'https://www.udemy.com');
 
-define('CURL_IMPERSONATE_BIN', '/tmp/curl-impersonate');
+define('PROXY_HOST', 'pool.proxy.market:10000');
 
-define('PROXY_HOST', 'proxy.packetstream.io');
-define('PROXY_PORT', 31113);
-define('PROXY_USER', 'acrossoffwest');
-define('PROXY_PASS', 'hu3m3xodmsNrEXUg');
+$homeDir = getenv('HOME') ?: posix_getpwuid(posix_getuid())['dir'];
+define('CURL_IMPERSONATE_BIN', $homeDir . '/.local/bin/curl-impersonate/curl-impersonate');
+define('BROWSER_FETCH_SCRIPT', __DIR__ . '/browser_fetch.js');
 
-const BAD_COUNTRIES = ['Mongolia', 'Mauritius', 'Panama'];
+const IMPERSONATE_PROFILES = [
+    'chrome136',
+    'chrome131',
+    'chrome124',
+    'safari184',
+    'safari180',
+    'firefox135',
+];
 
-const PROXY_COUNTRIES = [
-    0  => 'United States',
-    1  => 'United Kingdom',
-    2  => 'Germany',
-    3  => 'France',
-    4  => 'Canada',
-    5  => 'Australia',
-    6  => 'Netherlands',
-    7  => 'Sweden',
-    8  => 'Norway',
-    9  => 'Denmark',
-    10 => 'Finland',
-    11 => 'Switzerland',
-    12 => 'Austria',
-    13 => 'Belgium',
-    14 => 'Spain',
-    15 => 'Italy',
-    16 => 'Poland',
-    17 => 'Czech Republic',
-    18 => 'Portugal',
-    19 => 'Hungary',
+const PROXY_CREDENTIALS = [
+    // ['OIMJdnpjtT1c',  'cjZ39JKTb46rxGI0'],
+    // ['1VaiOaQsoSrL',  'WAbz24gQmVU76qJr'],
+    // ['p9EW1LsljUj0',  'rPSydjoNFkiHmI87'],
+    // ['ihYEyLalonTh',  'Z0eoUKGbg7sjVTDw'],
+    // ['ZNEXEhty5pOn',  'ol5s8WP7hZwSGXiB'],
+    // ['mRf5WwIvQpl3',  'UQtnzsiWv7gEXRSV'],
+    // ['6vTA1pLleULX',  'mnhyq3zMD8ZY5rRT'],
+    // ['LWEaMenGYrBa',  'dAFsy0MopaUhEJZ3'],
+    // ['UlSx7mp6OPP5',  'hwJAGPpyTj6i23v4'],
 ];
 
 const PROFILE_SKIP_MARKERS = ['SKIP', 'NOT_FOUND', 'HTTP_ERROR', 'RETRY:1'];
@@ -78,48 +75,187 @@ function getDb(): PDO
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Fetch a URL via curl-impersonate with proxy, return [httpCode, body].
+ * Менеджер активных прокси.
+ * ban(login)  — исключает прокси из ротации навсегда в этом запуске.
+ * next()      — возвращает следующий активный прокси (round-robin).
+ * count()     — количество оставшихся активных прокси.
+ * list()      — массив активных логинов.
  */
-function curlFetch(string $url, string $proxyAuth): array
+class ProxyPool
 {
-    $cmd = sprintf(
-        '%s -s -L --max-time %d --compressed '
-        . '--proxy socks5h://%s:%d '
-        . '--proxy-user %s '
-        . '-o - -w "\\n%%{http_code}" '
-        . '%s 2>/dev/null',
-        escapeshellarg(CURL_IMPERSONATE_BIN),
-        REQUEST_TIMEOUT,
-        PROXY_HOST,
-        PROXY_PORT,
-        escapeshellarg($proxyAuth),
-        escapeshellarg($url)
-    );
+    private array $active;
+    private array $banned = [];
+    private int   $idx    = 0;
 
-    $outputLines = [];
-    $exitCode    = 0;
-    exec($cmd, $outputLines, $exitCode);
-    $raw = implode("\n", $outputLines);
+    public function __construct()
+    {
+        $this->active = array_values(PROXY_CREDENTIALS);
+    }
+
+    public function ban(string $login): void
+    {
+        $before = count($this->active);
+        $this->active = array_values(
+            array_filter($this->active, fn($c) => $c[0] !== $login)
+        );
+        if (count($this->active) < $before) {
+            $this->banned[] = $login;
+            // сдвигаем индекс чтобы не пропустить следующий
+            if ($this->idx > 0) $this->idx--;
+        }
+    }
+
+    /** Возвращает ['login:pass', 'login'] */
+    public function next(): array
+    {
+        if (empty($this->active)) {
+            return ['', ''];
+        }
+        $creds = $this->active[$this->idx % count($this->active)];
+        $this->idx++;
+        return [$creds[0] . ':' . $creds[1], $creds[0]];
+    }
+
+    public function count(): int  { return count($this->active); }
+    public function banned(): array { return $this->banned; }
+    public function isEmpty(): bool { return empty($this->active); }
+}
+
+class ProxyRequestException extends RuntimeException
+{
+    public function __construct(
+        public string $type,
+        public string $url,
+        public string $proxyLogin,
+        string $details = ''
+    ) {
+        $message = $type . ' for ' . $url;
+        if ($proxyLogin !== '') {
+            $message .= ' via proxy ' . $proxyLogin;
+        }
+        if ($details !== '') {
+            $message .= ': ' . $details;
+        }
+
+        parent::__construct($message);
+    }
+}
+
+// Глобальный пул прокси (инициализируется в main-блоке)
+$proxyPool = null;
+
+/**
+ * Fetch a URL via curl-impersonate with browser TLS fingerprint.
+ * Uses proxy from pool when available, falls back to direct connection.
+ * Returns [httpCode, body, proxyLogin].
+ */
+function curlFetch(string $url): array
+{
+    global $proxyPool;
+
+    $profile = IMPERSONATE_PROFILES[array_rand(IMPERSONATE_PROFILES)];
+
+    [$proxyUserPass, $proxyLogin] = $proxyPool->next();
+
+    $cmd = [
+        CURL_IMPERSONATE_BIN,
+        '--impersonate', $profile,
+        '--max-time', (string) REQUEST_TIMEOUT,
+        '--connect-timeout', (string) CONNECT_TIMEOUT,
+        '-L',                    // follow redirects
+        '--max-redirs', '5',
+        '-s',                    // silent
+        '-w', '\n__HTTP_CODE__:%{http_code}',
+        '--compressed',
+    ];
+
+    if ($proxyUserPass !== '') {
+        $cmd[] = '-x';
+        $cmd[] = 'http://' . $proxyUserPass . '@' . PROXY_HOST;
+    }
+
+    $cmd[] = $url;
+
+    $descriptors = [
+        0 => ['pipe', 'r'],
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ];
+
+    $process = proc_open($cmd, $descriptors, $pipes);
+    if (!is_resource($process)) {
+        throw new ProxyRequestException('CURL_ERROR', $url, $proxyLogin, 'Failed to start curl-impersonate');
+    }
+
+    fclose($pipes[0]);
+    $stdout = stream_get_contents($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    $exitCode = proc_close($process);
 
     if ($exitCode !== 0) {
+        $stderr = trim($stderr);
         if ($exitCode === 28) {
-            throw new RuntimeException("CURL_TIMEOUT for $url");
+            throw new ProxyRequestException('CURL_TIMEOUT', $url, $proxyLogin);
         }
-        if (in_array($exitCode, [5, 6, 7, 52, 56, 97], true)) {
-            throw new RuntimeException("CURL_CONNECT for $url: exit $exitCode");
+        if (in_array($exitCode, [7, 5, 6], true)) {
+            throw new ProxyRequestException('CURL_CONNECT', $url, $proxyLogin, $stderr);
         }
-        throw new RuntimeException("CURL_ERROR for $url: exit $exitCode");
+        throw new ProxyRequestException('CURL_ERROR', $url, $proxyLogin, "exit=$exitCode $stderr");
     }
 
-    $lastNl = strrpos($raw, "\n");
-    if ($lastNl === false) {
-        throw new RuntimeException("CURL_ERROR for $url: unexpected output");
+    $httpCode = 0;
+    $body = $stdout;
+    if (preg_match('/\n__HTTP_CODE__:(\d+)$/', $stdout, $m)) {
+        $httpCode = (int) $m[1];
+        $body = substr($stdout, 0, -strlen($m[0]));
     }
 
-    $httpCode = (int) trim(substr($raw, $lastNl + 1));
-    $body     = substr($raw, 0, $lastNl);
+    return [$httpCode, $body, $proxyLogin];
+}
 
-    return [$httpCode, $body];
+/**
+ * Fallback: fetch URL via headless Playwright browser.
+ * Used when curl-impersonate gets a Cloudflare challenge (403).
+ * Returns [httpCode, body] or throws on failure.
+ */
+function browserFetch(string $url): array
+{
+    global $proxyPool;
+
+    $cmd = ['node', BROWSER_FETCH_SCRIPT, $url];
+
+    [$proxyUserPass, ] = $proxyPool->next();
+    if ($proxyUserPass !== '') {
+        $cmd[] = 'http://' . $proxyUserPass . '@' . PROXY_HOST;
+    }
+
+    $descriptors = [
+        0 => ['pipe', 'r'],
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ];
+
+    $process = proc_open($cmd, $descriptors, $pipes);
+    if (!is_resource($process)) {
+        throw new RuntimeException('Failed to start browser_fetch.js');
+    }
+
+    fclose($pipes[0]);
+    $stdout = stream_get_contents($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    proc_close($process);
+
+    $result = json_decode($stdout, true);
+    if (!is_array($result) || isset($result['error']) && $result['error'] !== null) {
+        $errMsg = $result['error'] ?? trim($stderr) ?: 'Unknown browser error';
+        throw new RuntimeException("BROWSER_ERROR: $errMsg");
+    }
+
+    return [(int) ($result['httpCode'] ?? 0), (string) ($result['body'] ?? '')];
 }
 
 /**
@@ -174,11 +310,6 @@ foreach ($argv as $arg) {
     if (preg_match('/^--total-workers=(\d+)$/', $arg, $m))  $totalWorkers = (int) $m[1];
 }
 
-$country = PROXY_COUNTRIES[$workerIdx % count(PROXY_COUNTRIES)] ?? 'Germany';
-if (in_array($country, BAD_COUNTRIES, true)) {
-    $country = 'Germany';
-}
-$proxyAuth  = PROXY_USER . ':' . PROXY_PASS . '_country-' . $country;
 $workerLabel = $totalWorkers > 1 ? "[W$workerIdx/$totalWorkers] " : "";
 
 $pdo = getDb();
@@ -201,7 +332,14 @@ $totalStmt = $pdo->prepare("SELECT COUNT(*) FROM `" . DB_TABLE . "` WHERE $eligi
 $totalStmt->execute([':tw' => $totalWorkers, ':wi' => $workerIdx]);
 $total = (int) $totalStmt->fetchColumn();
 
-echo "{$workerLabel}Country: $country | Delay: " . (DELAY_MS / 1000) . "s\n";
+$proxyPool = new ProxyPool();
+
+if ($proxyPool->isEmpty()) {
+    echo "{$workerLabel}Mode: DIRECT (no proxies, curl-impersonate only) | Delay: " . (DELAY_MS / 1000) . "s\n";
+} else {
+    echo "{$workerLabel}Proxy: " . PROXY_HOST . " (" . $proxyPool->count() . " accounts, round-robin) | Delay: " . (DELAY_MS / 1000) . "s\n";
+}
+echo "{$workerLabel}Engine: curl-impersonate (browser TLS fingerprint)\n";
 echo "{$workerLabel}Total rows to process: $total\n\n";
 
 $updateStmt = $pdo->prepare("
@@ -217,140 +355,278 @@ $updateStmt = $pdo->prepare("
     WHERE `_rowid` = ?
 ");
 
-$fetchStmt = $pdo->prepare("
+$fetchBatchStmt = $pdo->prepare("
     SELECT `_rowid`, `instructor`,
            `UdemyProfile1_parcing`,
            `UdemyProfile2_parcing`,
            `UdemyProfile3_parcing`
     FROM `" . DB_TABLE . "`
     WHERE $eligibleCondition
+      AND `_rowid` > :lastRowId
     ORDER BY `_rowid` ASC
-    LIMIT 1
+    LIMIT " . FETCH_BATCH_SIZE . "
 ");
 
-$processed   = 0;
-$found       = 0;
-$errors      = 0;
+$processed        = 0;
+$found            = 0;
+$errors           = 0;
+$consecutiveErrors = 0;      // подряд идущих ошибок (признак бана IP)
+$BAN_THRESHOLD    = 5;       // после N подряд — предупреждение о бане
+$BAN_PAUSE_SEC    = 30;      // пауза при обнаружении бана (секунды)
+
+// Счётчики по типу ошибки для итоговой статистики
+$errorStats = [];
 
 // Cache already-visited profile URLs within this run
 $visitedProfiles = [];
+$lastRowId = 0;
+$stopProcessing = false;
 
 while (true) {
-    $fetchStmt->execute([':tw' => $totalWorkers, ':wi' => $workerIdx]);
-    $row = $fetchStmt->fetch();
-    if ($row === false) {
+    $fetchBatchStmt->execute([
+        ':tw'        => $totalWorkers,
+        ':wi'        => $workerIdx,
+        ':lastRowId' => $lastRowId,
+    ]);
+    $rows = $fetchBatchStmt->fetchAll();
+    if ($rows === []) {
         break;
     }
 
-    $rowid      = (int) $row['_rowid'];
-    $instructor = $row['instructor'] ?? '';
+    foreach ($rows as $row) {
+        $rowid      = (int) $row['_rowid'];
+        $lastRowId  = $rowid;
+        $instructor = $row['instructor'] ?? '';
 
-    // Collect real profile URLs
-    $profileUrls = [];
-    foreach (['UdemyProfile1_parcing', 'UdemyProfile2_parcing', 'UdemyProfile3_parcing'] as $col) {
-        $url = trim($row[$col] ?? '');
-        if ($url !== '' && !in_array($url, PROFILE_SKIP_MARKERS, true)) {
-            $profileUrls[] = $url;
+        // Collect real profile URLs once per row.
+        $profileUrls = [];
+        foreach (['UdemyProfile1_parcing', 'UdemyProfile2_parcing', 'UdemyProfile3_parcing'] as $col) {
+            $url = trim($row[$col] ?? '');
+            if ($url !== '' && !in_array($url, PROFILE_SKIP_MARKERS, true)) {
+                $profileUrls[] = $url;
+            }
         }
-    }
+        $profileUrls = array_values(array_unique($profileUrls));
 
-    if (empty($profileUrls)) {
-        $updateStmt->execute(['', '', '', '', '', '', '', $rowid]);
-        continue;
-    }
+        if (empty($profileUrls)) {
+            $updateStmt->execute(['', '', '', '', '', '', '', $rowid]);
+            continue;
+        }
 
-    $processed++;
-    echo "{$workerLabel}[$processed/$total] rowid=$rowid | $instructor\n";
+        $processed++;
+        echo "{$workerLabel}[$processed/$total] rowid=$rowid | $instructor\n";
 
-    $merged = [
-        'website'   => '',
-        'linkedin'  => '',
-        'youtube'   => '',
-        'facebook'  => '',
-        'twitter'   => '',
-        'instagram' => '',
-        'tiktok'    => '',
-    ];
+        $merged = [
+            'website'   => '',
+            'linkedin'  => '',
+            'youtube'   => '',
+            'facebook'  => '',
+            'twitter'   => '',
+            'instagram' => '',
+            'tiktok'    => '',
+        ];
 
-    $networkError = false; // true = temporary error, do NOT mark as done
+        $networkError = false; // true = temporary error, do NOT mark as done
 
-    foreach ($profileUrls as $profileUrl) {
-        echo "  Profile: $profileUrl\n";
+        foreach ($profileUrls as $profileUrl) {
+            echo "  Profile: $profileUrl\n";
 
-        if (isset($visitedProfiles[$profileUrl])) {
-            $social = $visitedProfiles[$profileUrl];
-        } else {
-            try {
-                [$httpCode, $html] = curlFetch($profileUrl, $proxyAuth);
+            if (isset($visitedProfiles[$profileUrl])) {
+                $social = $visitedProfiles[$profileUrl];
+            } else {
+                try {
+                    [$httpCode, $html, $usedProxy] = curlFetch($profileUrl);
 
-                if (in_array($httpCode, [404, 410], true)) {
-                    // Profile deleted — treat as done, no data
-                    echo "  HTTP $httpCode (profile gone) — skip\n";
-                    $visitedProfiles[$profileUrl] = array_fill_keys(array_keys($merged), '');
-                    continue;
-                }
+                    $sizeBytes = strlen($html);
+                    $sizeStr   = $sizeBytes >= 1024
+                        ? round($sizeBytes / 1024, 1) . ' KB'
+                        : $sizeBytes . ' B';
+                    echo "  HTTP $httpCode | $sizeStr | proxy: $usedProxy\n";
 
-                if ($httpCode !== 200) {
-                    // Temporary block (403, 429, 5xx) — do not mark as done
-                    echo "  HTTP $httpCode (temporary) — will retry later\n";
+                    if (in_array($httpCode, [404, 410], true)) {
+                        echo "  → профиль удалён, пропускаем\n";
+                        $visitedProfiles[$profileUrl] = array_fill_keys(array_keys($merged), '');
+                        $consecutiveErrors = 0;
+                        continue;
+                    }
+
+                    if ($httpCode === 403) {
+                        echo "  → 403 от curl-impersonate, пробуем headless browser...\n";
+                        try {
+                            [$httpCode, $html] = browserFetch($profileUrl);
+                            $sizeBytes = strlen($html);
+                            $sizeStr   = $sizeBytes >= 1024
+                                ? round($sizeBytes / 1024, 1) . ' KB'
+                                : $sizeBytes . ' B';
+                            echo "  Browser: HTTP $httpCode | $sizeStr\n";
+                        } catch (RuntimeException $be) {
+                            echo "  Browser fallback failed: " . $be->getMessage() . "\n";
+                            $httpCode = 403;
+                        }
+                    }
+
+                    if ($httpCode === 403) {
+                        $errorStats['HTTP_403'] = ($errorStats['HTTP_403'] ?? 0) + 1;
+                        $consecutiveErrors++;
+                        if ($usedProxy !== '') {
+                            $proxyPool->ban($usedProxy);
+                        }
+                        $active = $proxyPool->count();
+                        echo "  → Cloudflare блокировка";
+                        if ($usedProxy !== '') {
+                            echo " [$usedProxy] → исключён | активных: $active";
+                        }
+                        echo "\n";
+                        $networkError = true;
+                        $errors++;
+                    } elseif ($httpCode === 429) {
+                        $errorStats['HTTP_429'] = ($errorStats['HTTP_429'] ?? 0) + 1;
+                        $consecutiveErrors++;
+                        echo "  → Too Many Requests (подряд: $consecutiveErrors)\n";
+                        $networkError = true;
+                        $errors++;
+                    } elseif ($httpCode >= 500) {
+                        $errorStats["HTTP_$httpCode"] = ($errorStats["HTTP_$httpCode"] ?? 0) + 1;
+                        $consecutiveErrors++;
+                        echo "  → ошибка сервера (подряд: $consecutiveErrors)\n";
+                        $networkError = true;
+                        $errors++;
+                    } elseif ($httpCode !== 200) {
+                        $errorStats["HTTP_$httpCode"] = ($errorStats["HTTP_$httpCode"] ?? 0) + 1;
+                        $consecutiveErrors++;
+                        echo "  → неожиданный ответ (подряд: $consecutiveErrors)\n";
+                        $networkError = true;
+                        $errors++;
+                    } else {
+                        $consecutiveErrors = 0;
+                        $social = extractSocialLinks($html);
+                        $visitedProfiles[$profileUrl] = $social;
+                    }
+
+                    // Предупреждение если много ошибок подряд (не 403 — те уже исключаются)
+                    if ($consecutiveErrors >= $BAN_THRESHOLD) {
+                        echo "\n  ⚠️  ВНИМАНИЕ: $consecutiveErrors ошибок подряд!\n";
+                        echo "  Статистика ошибок: " . json_encode($errorStats) . "\n";
+                        echo "  Активных прокси: " . $proxyPool->count() . "\n";
+                        echo "  Пауза $BAN_PAUSE_SEC сек перед продолжением...\n\n";
+                        sleep($BAN_PAUSE_SEC);
+                        $consecutiveErrors = 0;
+                    }
+
+                    if ($networkError || $stopProcessing) {
+                        break;
+                    }
+
+                } catch (ProxyRequestException $e) {
+                    $consecutiveErrors++;
+
+                    if ($e->type === 'CURL_TIMEOUT') {
+                        $errorStats['TIMEOUT'] = ($errorStats['TIMEOUT'] ?? 0) + 1;
+                        echo "  TIMEOUT — превышено время ожидания";
+                        if ($e->proxyLogin !== '') {
+                            echo " | proxy: {$e->proxyLogin}";
+                        }
+                        echo " (подряд: $consecutiveErrors)\n";
+                    } elseif ($e->type === 'CURL_CONNECT') {
+                        $errorStats['CONNECT'] = ($errorStats['CONNECT'] ?? 0) + 1;
+                        if ($e->proxyLogin !== '') {
+                            $proxyPool->ban($e->proxyLogin);
+                        }
+                        echo "  CONNECT ERROR — нет соединения с прокси";
+                        if ($e->proxyLogin !== '') {
+                            echo " [{$e->proxyLogin}]";
+                        }
+                        echo " | активных: " . $proxyPool->count() . " (подряд: $consecutiveErrors)\n";
+                        if ($proxyPool->isEmpty()) {
+                            echo "\n  💀 ВСЕ ПРОКСИ ЗАБЛОКИРОВАНЫ! Завершаем работу.\n";
+                            $stopProcessing = true;
+                            break;
+                        }
+                    } else {
+                        $errorStats['OTHER'] = ($errorStats['OTHER'] ?? 0) + 1;
+                        echo "  ERROR: " . $e->getMessage() . " (подряд: $consecutiveErrors)\n";
+                    }
+
+                    if ($consecutiveErrors >= $BAN_THRESHOLD) {
+                        echo "\n  ⚠️  ВНИМАНИЕ: $consecutiveErrors ошибок подряд!\n";
+                        echo "  Статистика ошибок: " . json_encode($errorStats) . "\n";
+                        echo "  Активных прокси: " . $proxyPool->count() . "\n";
+                        echo "  Пауза $BAN_PAUSE_SEC сек перед продолжением...\n\n";
+                        sleep($BAN_PAUSE_SEC);
+                        $consecutiveErrors = 0;
+                    }
+
                     $networkError = true;
                     $errors++;
-                    continue;
+                    break;
                 }
+            }
 
-                $social = extractSocialLinks($html);
-                $visitedProfiles[$profileUrl] = $social;
+            if ($stopProcessing) {
+                break;
+            }
 
-            } catch (RuntimeException $e) {
-                $msg = $e->getMessage();
-                echo "  ERROR: $msg\n";
-                // CURL_TIMEOUT / CURL_CONNECT = network issue, retry later
-                $networkError = true;
-                $errors++;
-                continue;
+            // Fill empty slots from this profile
+            foreach ($merged as $type => $existing) {
+                if ($existing === '' && $social[$type] !== '') {
+                    $merged[$type] = $social[$type];
+                }
             }
         }
 
-        // Fill empty slots from this profile
-        foreach ($merged as $type => $existing) {
-            if ($existing === '' && $social[$type] !== '') {
-                $merged[$type] = $social[$type];
-            }
+        if ($stopProcessing) {
+            break;
         }
-    }
 
-    // If any URL had a network/proxy error — skip saving, row stays unprocessed
-    if ($networkError) {
-        echo "  ↺ Skipped (network error) — will retry on next run\n";
+        // If any URL had a network/proxy error — skip saving, row stays unprocessed
+        if ($networkError) {
+            echo "  ↺ Skipped (network error) — will retry on next run\n";
+            usleep(DELAY_MS * 1000);
+            continue;
+        }
+
+        $hasSocial = array_filter($merged, fn($v) => $v !== '');
+        if ($hasSocial) {
+            $found++;
+            $str = implode(', ', array_map(fn($k, $v) => "$k=$v", array_keys($hasSocial), $hasSocial));
+            echo "  ✓ Found: $str\n";
+        } else {
+            echo "  No social links found\n";
+        }
+
+        $updateStmt->execute([
+            $merged['website'],
+            $merged['linkedin'],
+            $merged['youtube'],
+            $merged['facebook'],
+            $merged['twitter'],
+            $merged['instagram'],
+            $merged['tiktok'],
+            $rowid,
+        ]);
+
         usleep(DELAY_MS * 1000);
-        continue;
     }
 
-    $hasSocial = array_filter($merged, fn($v) => $v !== '');
-    if ($hasSocial) {
-        $found++;
-        $str = implode(', ', array_map(fn($k, $v) => "$k=$v", array_keys($hasSocial), $hasSocial));
-        echo "  ✓ Found: $str\n";
-    } else {
-        echo "  No social links found\n";
+    if ($stopProcessing) {
+        break;
     }
-
-    $updateStmt->execute([
-        $merged['website'],
-        $merged['linkedin'],
-        $merged['youtube'],
-        $merged['facebook'],
-        $merged['twitter'],
-        $merged['instagram'],
-        $merged['tiktok'],
-        $rowid,
-    ]);
-
-    usleep(DELAY_MS * 1000);
 }
 
 echo "\n--- Done ---\n";
 echo "{$workerLabel}Total rows              : $total\n";
 echo "{$workerLabel}Processed               : $processed\n";
 echo "{$workerLabel}With social links found : $found\n";
-echo "{$workerLabel}Errors                  : $errors\n";
+echo "{$workerLabel}Errors total            : $errors\n";
+if (!empty($errorStats)) {
+    echo "{$workerLabel}Error breakdown:\n";
+    arsort($errorStats);
+    foreach ($errorStats as $type => $count) {
+        echo "{$workerLabel}  $type: $count\n";
+    }
+}
+$banned = $proxyPool->banned();
+if (!empty($banned)) {
+    echo "{$workerLabel}Banned proxies (" . count($banned) . "): " . implode(', ', $banned) . "\n";
+}
+echo "{$workerLabel}Active proxies remaining: " . $proxyPool->count() . "\n";
