@@ -52,14 +52,16 @@ $progress   = $hasWebsite > 0 ? round($processed / $hasWebsite * 100, 1) : 0;
 
 // ── Последние найденные email-ы ────────────────────────────────────────────
 $recentEmails = $pdo->query("
-    SELECT instructor, website_parcing, email_parcing, linkedin_parcing, instagram_parcing
+    SELECT instructor, website_parcing, email_parcing, linkedin_parcing, instagram_parcing, email_scraped_at
     FROM `" . DB_TABLE . "`
     WHERE email_scraped = 1
       AND email_parcing IS NOT NULL
       AND email_parcing NOT IN ('NOT_FOUND','JS_REQUIRED','SOCIAL_URL')
       AND email_parcing NOT LIKE 'HTTP_%'
       AND email_parcing NOT LIKE 'ERROR:%'
-    ORDER BY _rowid DESC
+    ORDER BY CASE WHEN email_scraped_at IS NOT NULL THEN 0 ELSE 1 END ASC,
+             email_scraped_at DESC,
+             _rowid DESC
     LIMIT 15
 ")->fetchAll();
 
@@ -522,6 +524,7 @@ $refreshSec = 30;
                     <th>Инструктор</th>
                     <th>Email</th>
                     <th>Соцсети</th>
+                    <th>Время</th>
                 </tr>
             </thead>
             <tbody>
@@ -542,6 +545,13 @@ $refreshSec = 30;
                                 <span class="social-tag" style="color:#f472b6">ig</span>
                             <?php endif; ?>
                         </div>
+                    </td>
+                    <td style="color:#64748b; font-size:0.75rem; white-space:nowrap;">
+                        <?php if (!empty($row['email_scraped_at'])): ?>
+                            <?= date('H:i:s', strtotime($row['email_scraped_at'])) ?>
+                        <?php else: ?>
+                            —
+                        <?php endif; ?>
                     </td>
                 </tr>
                 <?php endforeach; ?>

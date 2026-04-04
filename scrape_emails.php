@@ -1022,6 +1022,7 @@ $updateStmt = $pdo->prepare("
     UPDATE `" . DB_TABLE . "`
     SET `email_parcing`   = ?,
         `email_scraped`   = 1,
+        `email_scraped_at` = NOW(),
         `linkedin_parcing`  = CASE WHEN (? = '')                                    THEN `linkedin_parcing`
                                    WHEN (`linkedin_parcing`  IS NULL OR `linkedin_parcing`  = '') THEN ?
                                    WHEN FIND_IN_SET(?, `linkedin_parcing`)  > 0     THEN `linkedin_parcing`
@@ -1059,8 +1060,9 @@ $updateRetryStmt = $pdo->prepare("
 // Финальный статус без соцсетей — для HTTP ошибок, JS_REQUIRED (email_scraped = 1)
 $updateStatusStmt = $pdo->prepare("
     UPDATE `" . DB_TABLE . "`
-    SET `email_parcing` = ?,
-        `email_scraped` = 1
+    SET `email_parcing`    = ?,
+        `email_scraped`    = 1,
+        `email_scraped_at` = NOW()
     WHERE `_rowid` = ?
 ");
 
