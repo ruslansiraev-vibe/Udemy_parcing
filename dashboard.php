@@ -65,6 +65,35 @@ $recentEmails = $pdo->query("
     LIMIT 15
 ")->fetchAll();
 
+// ── Instagram + Email статистика ──────────────────────────────────────────
+$instaStats = $pdo->query("
+    SELECT
+        COUNT(CASE WHEN instagram_parcing IS NOT NULL AND instagram_parcing != '' THEN 1 END) AS total_insta,
+        COUNT(CASE WHEN (instagram_parcing IS NOT NULL AND instagram_parcing != '')
+                    AND email_parcing IS NOT NULL
+                    AND email_parcing NOT IN ('NOT_FOUND','JS_REQUIRED','SOCIAL_URL')
+                    AND email_parcing NOT LIKE 'HTTP_%' THEN 1 END) AS insta_with_email,
+        COUNT(CASE WHEN (instagram_parcing IS NOT NULL AND instagram_parcing != '')
+                    AND (email_parcing IS NULL
+                         OR email_parcing IN ('NOT_FOUND','JS_REQUIRED','SOCIAL_URL')
+                         OR email_parcing LIKE 'HTTP_%') THEN 1 END) AS insta_no_email
+    FROM `" . DB_TABLE . "`
+")->fetch();
+
+// ── Последние Instagram + Email ────────────────────────────────────────────
+$recentInstaEmail = $pdo->query("
+    SELECT instructor, instagram_parcing, email_parcing, email_scraped_at
+    FROM `" . DB_TABLE . "`
+    WHERE instagram_parcing IS NOT NULL AND instagram_parcing != ''
+      AND email_parcing IS NOT NULL
+      AND email_parcing NOT IN ('NOT_FOUND','JS_REQUIRED','SOCIAL_URL')
+      AND email_parcing NOT LIKE 'HTTP_%'
+    ORDER BY CASE WHEN email_scraped_at IS NOT NULL THEN 0 ELSE 1 END ASC,
+             email_scraped_at DESC,
+             _rowid DESC
+    LIMIT 20
+")->fetchAll();
+
 // ── HTTP коды ошибок ───────────────────────────────────────────────────────
 $httpErrors = $pdo->query("
     SELECT email_parcing AS code, COUNT(*) AS cnt
@@ -512,6 +541,64 @@ $refreshSec = 30;
             <div class="s-val" style="color:#2dd4bf"><?= number_format((int)$stats['has_tiktok'], 0, '.', ' ') ?></div>
         </div>
     </div>
+</div>
+
+<!-- Instagram + Email блок -->
+<div class="panel" style="margin-bottom: 28px;">
+    <div class="section-title">Instagram аккаунты + Email</div>
+    <div style="display:grid; grid-template-columns: repeat(3,1fr); gap:12px; margin-bottom:20px;">
+        <div class="social-card">
+            <div class="s-name">Всего Instagram</div>
+            <div class="s-val" style="color:#f472b6"><?= number_format((int)$instaStats['total_insta'], 0, '.', ' ') ?></div>
+        </div>
+        <div class="social-card">
+            <div class="s-name">Instagram + Email</div>
+            <div class="s-val" style="color:#4ade80"><?= number_format((int)$instaStats['insta_with_email'], 0, '.', ' ') ?></div>
+            <div style="font-size:0.72rem; color:#64748b; margin-top:4px;">
+                <?= $instaStats['total_insta'] > 0 ? round($instaStats['insta_with_email'] / $instaStats['total_insta'] * 100, 1) : 0 ?>% от всех
+            </div>
+        </div>
+        <div class="social-card">
+            <div class="s-name">Instagram без Email</div>
+            <div class="s-val" style="color:#fbbf24"><?= number_format((int)$instaStats['insta_no_email'], 0, '.', ' ') ?></div>
+        </div>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>Инструктор</th>
+                <th>Instagram</th>
+                <th>Email</th>
+                <th>Время</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php foreach ($recentInstaEmail as $row): ?>
+            <tr>
+                <td class="instructor-cell" title="<?= htmlspecialchars($row['instructor'] ?? '') ?>">
+                    <?= htmlspecialchars(mb_strimwidth($row['instructor'] ?? '', 0, 28, '…')) ?>
+                </td>
+                <td style="font-size:0.78rem;">
+                    <?php
+                        $instaUrl = $row['instagram_parcing'] ?? '';
+                        $instaHandle = preg_replace('#https?://(www\.)?instagram\.com/#', '@', $instaUrl);
+                        $instaHandle = rtrim($instaHandle, '/');
+                    ?>
+                    <a href="<?= htmlspecialchars($instaUrl) ?>" target="_blank"
+                       style="color:#f472b6; text-decoration:none;">
+                        <?= htmlspecialchars($instaHandle) ?>
+                    </a>
+                </td>
+                <td class="email-cell" style="font-size:0.78rem;">
+                    <?= htmlspecialchars(str_replace(';', ' ', $row['email_parcing'] ?? '')) ?>
+                </td>
+                <td style="color:#64748b; font-size:0.75rem; white-space:nowrap;">
+                    <?= !empty($row['email_scraped_at']) ? date('H:i:s', strtotime($row['email_scraped_at'])) : '—' ?>
+                </td>
+            </tr>
+            <?php endforeach; ?>
+        </tbody>
+    </table>
 </div>
 
 <div class="two-col">
