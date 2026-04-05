@@ -30,6 +30,7 @@ define('FETCH_BATCH_SIZE', 100);
 define('MAX_EMAIL_SCAN_BYTES', 400000);
 define('MAX_TEXT_SCAN_BYTES', 250000);
 define('MAX_ATTR_SCAN_BYTES', 2000);
+define('MAX_HTML_BYTES', 512000);      // обрезаем HTML страницы больше 512 KB
 define('MAX_EMAIL_CANDIDATE_LEN', 160);
 define('BAN_THRESHOLD',  5);      // подряд идущих ошибок — предупреждение
 define('BAN_PAUSE_SEC',  0);      // пауза отключена
@@ -1115,9 +1116,17 @@ while (true) {
             $result = $visitedPages[$website];
         } else {
             $result = fetchPage($website);
+            if (strlen($result['html']) > MAX_HTML_BYTES) {
+                $result['html'] = substr($result['html'], 0, MAX_HTML_BYTES);
+            }
             if ($result['error'] === '' && $result['code'] === 200) {
                 $visitedPages[$website] = $result;
             }
+        }
+
+        // Очищаем кэш если накопилось много страниц (защита от утечки памяти)
+        if (count($visitedPages) > 50) {
+            $visitedPages = [];
         }
 
         $sizeBytes = strlen($result['html']);
@@ -1218,6 +1227,9 @@ while (true) {
                 $sub = $visitedPages[$subUrl];
             } else {
                 $sub = fetchPage($subUrl);
+                if (strlen($sub['html']) > MAX_HTML_BYTES) {
+                    $sub['html'] = substr($sub['html'], 0, MAX_HTML_BYTES);
+                }
                 if ($sub['error'] === '' && $sub['code'] === 200) {
                     $visitedPages[$subUrl] = $sub;
                 }
