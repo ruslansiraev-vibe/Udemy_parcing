@@ -34,6 +34,7 @@ define('MAX_HTML_BYTES', 512000);      // обрезаем HTML страницы
 define('MAX_EMAIL_CANDIDATE_LEN', 160);
 define('BAN_THRESHOLD',  5);      // подряд идущих ошибок — предупреждение
 define('BAN_PAUSE_SEC',  0);      // пауза отключена
+define('MAX_RETRIES',    5);      // максимум попыток на один сайт
 
 $homeDir = getenv('HOME') ?: '';
 define('CURL_IMPERSONATE_BIN', $homeDir !== '' ? $homeDir . '/.local/bin/curl-impersonate/curl-impersonate' : '');
@@ -984,6 +985,7 @@ $eligibleCondition = "
     AND `website_parcing` != 'NOT_FOUND'
     AND `website_parcing` NOT REGEXP 'instagram\.com|twitter\.com|x\.com/|facebook\.com|linkedin\.com|youtube\.com|tiktok\.com|linktr\.ee|t\.me|vk\.com|telegram\.me'
     AND `email_scraped` IS NULL
+    AND (`email_parcing` IS NULL OR `email_parcing` REGEXP '^RETRY:[0-9]+$')
     AND (`_rowid` % :tw) = :wi
 ";
 
@@ -1057,6 +1059,15 @@ $updateRetryStmt = $pdo->prepare("
     SET `email_parcing` = ?
     WHERE `_rowid` = ?
 ");
+
+// Получить текущий номер попытки из метки RETRY:N
+function getRetryCount(string $mark): int
+{
+    if (preg_match('/^RETRY:(\d+)$/', $mark, $m)) {
+        return (int) $m[1];
+    }
+    return 0;
+}
 
 // Финальный статус без соцсетей — для HTTP ошибок, JS_REQUIRED (email_scraped = 1)
 $updateStatusStmt = $pdo->prepare("
@@ -1135,7 +1146,17 @@ while (true) {
         if ($result['error'] !== '') {
             $consecutiveErrors++;
             $errorStats['NETWORK'] = ($errorStats['NETWORK'] ?? 0) + 1;
-            echo "  HTTP 0 | 0 B | ERROR: {$result['error']} (подряд: $consecutiveErrors)\n";
+            $retryCount = getRetryCount($currentMark);
+            $nextRetry  = $retryCount + 1;
+
+            if ($nextRetry >= MAX_RETRIES) {
+                echo "  HTTP 0 | 0 B | ERROR: {$result['error']} (попытка $nextRetry/" . MAX_RETRIES . " — финально)\n";
+                $updateStatusStmt->execute(['UNAVAILABLE', $rowid]);
+            } else {
+                echo "  HTTP 0 | 0 B | ERROR: {$result['error']} (попытка $nextRetry/" . MAX_RETRIES . ")\n";
+                $updateRetryStmt->execute(["RETRY:$nextRetry", $rowid]);
+            }
+
             if ($consecutiveErrors >= BAN_THRESHOLD) {
                 echo "\n  ⚠️  ВНИМАНИЕ: $consecutiveErrors ошибок подряд!\n";
                 echo "  Статистика: " . json_encode($errorStats) . "\n";
@@ -1155,21 +1176,30 @@ while (true) {
         if ($code !== 200) {
             $consecutiveErrors++;
             $errorStats["HTTP_$code"] = ($errorStats["HTTP_$code"] ?? 0) + 1;
+            $retryCount = getRetryCount($currentMark);
+            $nextRetry  = $retryCount + 1;
 
-            if (in_array($code, [403, 429], true) || $code >= 500) {
-                echo "  → временная блокировка/ошибка сервера, оставляем на повтор\n";
-            } elseif (in_array($code, [404, 410], true)) {
-                if ($currentMark === 'RETRY:1') {
-                    // вторая попытка — помечаем как обработанную (больше не повторять)
-                    echo "  → попытка 2/2 — сохраняем HTTP_$code\n";
+            // Коды которые точно не изменятся — сразу финально
+            if (in_array($code, [404, 410], true)) {
+                if ($nextRetry >= MAX_RETRIES) {
+                    echo "  → попытка $nextRetry/" . MAX_RETRIES . " — финально сохраняем HTTP_$code\n";
                     $updateStatusStmt->execute(['HTTP_' . $code, $rowid]);
                 } else {
-                    // первая попытка — оставляем email_scraped = NULL для повтора
-                    echo "  → попытка 1/2 — повтор при следующем запуске\n";
-                    $updateRetryStmt->execute(['RETRY:1', $rowid]);
+                    echo "  → попытка $nextRetry/" . MAX_RETRIES . " — повтор при следующем запуске\n";
+                    $updateRetryStmt->execute(["RETRY:$nextRetry", $rowid]);
+                }
+            } elseif (in_array($code, [403, 429], true) || $code >= 500) {
+                // Временные ошибки — повторяем до MAX_RETRIES
+                if ($nextRetry >= MAX_RETRIES) {
+                    echo "  → попытка $nextRetry/" . MAX_RETRIES . " — финально сохраняем HTTP_$code\n";
+                    $updateStatusStmt->execute(['HTTP_' . $code, $rowid]);
+                } else {
+                    echo "  → попытка $nextRetry/" . MAX_RETRIES . " — временная ошибка, повтор\n";
+                    $updateRetryStmt->execute(["RETRY:$nextRetry", $rowid]);
                 }
             } else {
-                // прочие коды (5xx и т.д.) — помечаем как обработанную
+                // Прочие коды — сразу финально
+                echo "  → сохраняем HTTP_$code\n";
                 $updateStatusStmt->execute(['HTTP_' . $code, $rowid]);
             }
 

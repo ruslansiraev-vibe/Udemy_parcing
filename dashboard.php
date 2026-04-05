@@ -37,6 +37,8 @@ $stats = $pdo->query("
         COUNT(CASE WHEN email_parcing = 'JS_REQUIRED' THEN 1 END) AS js_required,
         COUNT(CASE WHEN email_parcing = 'SOCIAL_URL' THEN 1 END) AS social_url,
         COUNT(CASE WHEN email_parcing LIKE 'HTTP_%' THEN 1 END) AS http_errors,
+        COUNT(CASE WHEN email_parcing = 'UNAVAILABLE' THEN 1 END) AS unavailable,
+        COUNT(CASE WHEN email_parcing REGEXP '^RETRY:[0-9]+$' THEN 1 END) AS in_retry,
         COUNT(CASE WHEN linkedin_parcing IS NOT NULL AND linkedin_parcing != '' THEN 1 END) AS has_linkedin,
         COUNT(CASE WHEN instagram_parcing IS NOT NULL AND instagram_parcing != '' THEN 1 END) AS has_instagram,
         COUNT(CASE WHEN youtube_parcing IS NOT NULL AND youtube_parcing != '' THEN 1 END) AS has_youtube,
@@ -509,6 +511,16 @@ $refreshSec = 30;
         <div class="card-label">HTTP ошибки</div>
         <div class="card-value red"><?= number_format((int)$stats['http_errors'], 0, '.', ' ') ?></div>
         <div class="card-sub">4xx / 5xx</div>
+    </div>
+    <div class="card">
+        <div class="card-label">Недоступен (5 попыток)</div>
+        <div class="card-value red"><?= number_format((int)$stats['unavailable'], 0, '.', ' ') ?></div>
+        <div class="card-sub">UNAVAILABLE</div>
+    </div>
+    <div class="card">
+        <div class="card-label">В очереди повторов</div>
+        <div class="card-value yellow"><?= number_format((int)$stats['in_retry'], 0, '.', ' ') ?></div>
+        <div class="card-sub">RETRY:1..4</div>
     </div>
 </div>
 
