@@ -21,7 +21,7 @@ define('DB_TABLE', 'leads_copy');
 define('DB_USER',  'root');
 define('DB_PASS',  '');
 
-define('DELAY_MS',         1000);
+define('DELAY_MS',         3000);
 define('REQUEST_TIMEOUT',  15);
 define('CONNECT_TIMEOUT',  10);
 define('FETCH_BATCH_SIZE', 100);
