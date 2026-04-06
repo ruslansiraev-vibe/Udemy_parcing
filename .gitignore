@@ -7,6 +7,11 @@
 # SQL dumps
 *.sql
 
+# SQLite databases
+*.db
+*.db-shm
+*.db-wal
+
 # JSON data files
 *.json
 
