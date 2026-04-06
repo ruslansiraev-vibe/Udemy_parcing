@@ -16,6 +16,16 @@
  *   php xpoz_parser.php --from=100 --to=500               # диапазон по порядковому номеру
  */
 
+// ── Load .env ────────────────────────────────────────────────────────────────
+
+$envFile = __DIR__ . '/.env';
+if (file_exists($envFile)) {
+    foreach (file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+        if (str_starts_with(trim($line), '#')) continue;
+        if (str_contains($line, '=')) putenv(trim($line));
+    }
+}
+
 // ── Config ───────────────────────────────────────────────────────────────────
 
 define('DB_HOST',  '127.0.0.1');
@@ -186,8 +196,12 @@ function ensureColumns(): void
     }
     foreach (XPOZ_COLUMNS as $name => $ddl) {
         if (!in_array($name, $existing, true)) {
-            $pdo->exec("ALTER TABLE `" . DB_TABLE . "` ADD COLUMN `{$name}` {$ddl}");
-            echo "  + Added column: {$name}\n";
+            try {
+                $pdo->exec("ALTER TABLE `" . DB_TABLE . "` ADD COLUMN `{$name}` {$ddl}");
+                echo "  + Added column: {$name}\n";
+            } catch (PDOException $e) {
+                if ($e->getCode() !== '42S21') throw $e; // ignore "column already exists"
+            }
         }
     }
 }
@@ -869,7 +883,7 @@ function callClaudeHaiku(string $contentText): ?array
 {
     $payload = json_encode([
         'model'      => MODEL_HAIKU,
-        'max_tokens' => 384,
+        'max_tokens' => 1024,
         'system'     => [[
             'type'          => 'text',
             'text'          => MONETIZATION_SYSTEM_PROMPT,
@@ -888,18 +902,35 @@ function callClaudeHaiku(string $contentText): ?array
     ];
 
     $body = curlPost('https://api.anthropic.com/v1/messages', $payload, $headers);
-    if ($body === false) return null;
+    if ($body === false) {
+        fwrite(STDERR, "  [Claude] cURL failed\n");
+        return null;
+    }
 
     $resp = @json_decode($body, true);
-    if (!is_array($resp) || !empty($resp['error'])) return null;
+    if (!is_array($resp) || !empty($resp['error'])) {
+        fwrite(STDERR, "  [Claude] API error: " . substr($body, 0, 300) . "\n");
+        return null;
+    }
 
     $raw = trim($resp['content'][0]['text'] ?? '');
+    $raw = preg_replace('/^```(?:json)?\s*/i', '', $raw);
+    $raw = preg_replace('/\s*```\s*$/', '', $raw);
+    $raw = trim($raw);
+
     $start = strpos($raw, '{');
     $end   = strrpos($raw, '}');
-    if ($start === false || $end === false || $end <= $start) return null;
+    if ($start === false || $end === false || $end <= $start) {
+        fwrite(STDERR, "  [Claude] No JSON in response: " . substr($raw, 0, 300) . "\n");
+        return null;
+    }
 
     $result = @json_decode(substr($raw, $start, $end - $start + 1), true);
-    return is_array($result) ? $result : null;
+    if (!is_array($result)) {
+        fwrite(STDERR, "  [Claude] JSON parse failed: " . substr($raw, 0, 300) . "\n");
+        return null;
+    }
+    return $result;
 }
 
 function criterion5OtherSocials(string $username, string $biography, string $externalUrl): array

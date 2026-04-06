@@ -209,7 +209,7 @@ $dataStmt = $pdo->prepare("
            `xpoz_post_engagement`, `xpoz_monetization`, `xpoz_engagement_rate`,
            `xpoz_icp`, `xpoz_offer_type`, `xpoz_funnel_type`, `xpoz_business_model`,
            `xpoz_audience_type`, `xpoz_monetization_strength`, `xpoz_monetization_reason`,
-           `xpoz_platform_mix`, `xpoz_primary_domain`, `xpoz_language`, `xpoz_geo_hint`,
+           `xpoz_c4_reason`, `xpoz_platform_mix`, `xpoz_primary_domain`, `xpoz_language`, `xpoz_geo_hint`,
            `xpoz_qualified`, `xpoz_error`, `xpoz_analyzed_at`
     FROM `" . DB_TABLE . "` WHERE {$where}
     ORDER BY `{$sort}` {$dir}
@@ -578,6 +578,7 @@ tr:hover td{background:#252a3a}
             <th>Platform</th>
             <th>Domain</th>
             <th>Reason</th>
+            <th>C4 Reason</th>
             <th><a href="<?= sortUrl('xpoz_qualified',$sort,$dir) ?>">Qual<?= sortIcon('xpoz_qualified',$sort,$dir) ?></a></th>
         </tr>
         </thead>
@@ -611,11 +612,12 @@ tr:hover td{background:#252a3a}
             <td style="font-size:0.7rem;color:#64748b"><?= $h($r['xpoz_platform_mix'] ?: '') ?></td>
             <td style="font-size:0.72rem;color:#60a5fa"><?= $h($r['xpoz_primary_domain'] ?: '') ?></td>
             <td style="font-size:0.72rem;color:#94a3b8;max-width:220px;white-space:normal;line-height:1.4"><?= $h($r['xpoz_monetization_reason'] ?: '') ?></td>
+            <td style="font-size:0.72rem;color:#c084fc;max-width:220px;white-space:normal;line-height:1.4"><?= $h($r['xpoz_c4_reason'] ?: '') ?></td>
             <td><?php if ($r['xpoz_qualified']): ?><span class="tag tag-green">YES</span><?php elseif ($r['xpoz_error']): ?><span class="tag tag-red" title="<?= $h($r['xpoz_error']) ?>">ERR</span><?php else: ?><span class="tag tag-gray">NO</span><?php endif; ?></td>
         </tr>
         <?php endforeach; ?>
         <?php if (!$rows): ?>
-        <tr><td colspan="16" style="text-align:center;color:#64748b;padding:24px">Нет данных</td></tr>
+        <tr><td colspan="17" style="text-align:center;color:#64748b;padding:24px">Нет данных</td></tr>
         <?php endif; ?>
         </tbody>
     </table>
