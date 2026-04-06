@@ -29,11 +29,14 @@ function getDb(): PDO
     return $pdo;
 }
 
+require_once __DIR__ . '/xpoz_migrate.php';
+xpoz_ensure_columns(getDb(), DB_TABLE);
+
 // ── Actions (POST) ───────────────────────────────────────────────────────────
 
 $flash = '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     $action = $_POST['action'] ?? '';
 
     if ($action === 'analyze_single') {
