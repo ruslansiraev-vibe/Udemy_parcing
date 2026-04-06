@@ -14,7 +14,23 @@
  *   php xpoz_parser.php --reanalyze                       # повторный анализ
  *   php xpoz_parser.php --limit=50                        # ограничить выборку
  *   php xpoz_parser.php --from=100 --to=500               # диапазон по порядковому номеру
+ *   php xpoz_parser.php --require-email                   # только строки с email (сайт/YT/TW/bio)
  */
+
+/** SQL fragment: row has at least one usable email (aligned with summary.php logic). */
+const XPOZ_ELIGIBLE_HAS_EMAIL_SQL = <<<'SQL'
+(
+  (`email_parcing` IS NOT NULL AND TRIM(`email_parcing`) != ''
+   AND `email_parcing` NOT IN ('NOT_FOUND','JS_REQUIRED','SOCIAL_URL','UNAVAILABLE')
+   AND `email_parcing` NOT LIKE 'HTTP_%' AND `email_parcing` NOT LIKE 'ERROR:%' AND `email_parcing` NOT LIKE 'RETRY:%')
+  OR (`youtube_parcing_email` IS NOT NULL AND TRIM(`youtube_parcing_email`) != ''
+      AND `youtube_parcing_email` NOT IN ('NOT_FOUND','INVALID_URL'))
+  OR (`twitter_parcing_email` IS NOT NULL AND TRIM(`twitter_parcing_email`) != ''
+      AND `twitter_parcing_email` NOT IN ('NOT_FOUND','INVALID_URL'))
+  OR (`instagram_bio_email` IS NOT NULL AND TRIM(`instagram_bio_email`) != ''
+      AND `instagram_bio_email` NOT IN ('NOT_FOUND','INVALID_URL'))
+)
+SQL;
 
 // ── Load .env ────────────────────────────────────────────────────────────────
 
@@ -1198,6 +1214,7 @@ $limit        = 0;
 $singleUser   = '';
 $showStatsOnly = false;
 $reanalyze    = false;
+$requireEmail = false;
 $rangeFrom    = 0;
 $rangeTo      = 0;
 
@@ -1208,8 +1225,9 @@ foreach ($argv as $arg) {
     if (preg_match('/^--username=(.+)$/',        $arg, $m)) $singleUser   = trim($m[1]);
     if (preg_match('/^--from=(\d+)$/',           $arg, $m)) $rangeFrom    = (int)$m[1];
     if (preg_match('/^--to=(\d+)$/',             $arg, $m)) $rangeTo      = (int)$m[1];
-    if ($arg === '--stats')     $showStatsOnly = true;
-    if ($arg === '--reanalyze') $reanalyze     = true;
+    if ($arg === '--stats')        $showStatsOnly = true;
+    if ($arg === '--reanalyze')    $reanalyze      = true;
+    if ($arg === '--require-email') $requireEmail  = true;
 }
 
 $workerLabel = $totalWorkers > 1 ? "[W{$workerIdx}/{$totalWorkers}] " : "";
@@ -1232,8 +1250,23 @@ if ($singleUser !== '') {
     }
     $result = analyzeAccount($username, true);
 
-    $row = $pdo->prepare("SELECT `_rowid` FROM `" . DB_TABLE . "` WHERE `instagram_parcing` LIKE ? LIMIT 1");
-    $row->execute(["%{$username}%"]);
+    $h = strtolower($username);
+    $row = $pdo->prepare("
+        SELECT `_rowid` FROM `" . DB_TABLE . "`
+        WHERE `instagram_parcing` IS NOT NULL AND TRIM(`instagram_parcing`) != ''
+          AND (
+            LOCATE(?, LOWER(`instagram_parcing`)) > 0
+            OR LOCATE(?, LOWER(`instagram_parcing`)) > 0
+            OR LOCATE(?, LOWER(`instagram_parcing`)) > 0
+          )
+        ORDER BY `_rowid` ASC
+        LIMIT 1
+    ");
+    $row->execute([
+        'instagram.com/' . $h,
+        'instagram.com/@' . $h,
+        '@' . $h,
+    ]);
     $found = $row->fetch();
     if ($found) {
         saveResult((int)$found['_rowid'], $result);
@@ -1252,6 +1285,9 @@ $eligibleCondition = "
 ";
 if (!$reanalyze) {
     $eligibleCondition .= " AND `xpoz_scraped` IS NULL";
+}
+if ($requireEmail) {
+    $eligibleCondition .= ' AND ' . trim(XPOZ_ELIGIBLE_HAS_EMAIL_SQL);
 }
 $eligibleCondition .= " AND (`_rowid` % :tw) = :wi";
 
@@ -1286,6 +1322,9 @@ $total = (int)$totalStmt->fetchColumn();
 if ($limit > 0 && $total > $limit) $total = $limit;
 
 echo "{$workerLabel}xpoz_parser.php — Instagram qualifier via Xpoz API\n";
+if ($requireEmail) {
+    echo "{$workerLabel}Фильтр: только строки с email (сайт / YouTube / Twitter / Instagram bio)\n";
+}
 echo "{$workerLabel}Total accounts to process: {$total}\n";
 echo "{$workerLabel}Estimated time: ~" . ceil($total * 18 / 60) . " min\n\n";
 

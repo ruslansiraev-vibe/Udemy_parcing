@@ -32,6 +32,28 @@ function getDb(): PDO
 require_once __DIR__ . '/xpoz_migrate.php';
 xpoz_ensure_columns(getDb(), DB_TABLE);
 
+/** Путь к PHP CLI (у FPM часто нет «php» в PATH — иначе анализ из веба молча не запускается). */
+function xpoz_dashboard_php_cli(): string
+{
+    $env = getenv('PHP_CLI');
+    if ($env !== false && $env !== '' && is_executable($env)) {
+        return $env;
+    }
+    if (defined('PHP_BINDIR') && PHP_BINDIR !== '') {
+        $p = PHP_BINDIR . DIRECTORY_SEPARATOR . 'php';
+        if (is_executable($p)) {
+            return $p;
+        }
+    }
+    foreach (['/usr/bin/php', '/usr/local/bin/php', '/bin/php'] as $p) {
+        if (is_executable($p)) {
+            return $p;
+        }
+    }
+
+    return 'php';
+}
+
 // ── Actions (POST) ───────────────────────────────────────────────────────────
 
 $flash = '';
@@ -42,10 +64,39 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     if ($action === 'analyze_single') {
         $username = trim($_POST['username'] ?? '');
         if ($username !== '') {
-            $cmd = 'php ' . escapeshellarg(__DIR__ . '/xpoz_parser.php')
-                 . ' --username=' . escapeshellarg($username) . ' 2>&1';
-            $output = shell_exec($cmd);
-            $flash = "Анализ @{$username} завершён.";
+            $php    = xpoz_dashboard_php_cli();
+            $script = __DIR__ . '/xpoz_parser.php';
+            $cmd    = escapeshellarg($php) . ' ' . escapeshellarg($script)
+                    . ' --username=' . escapeshellarg($username) . ' 2>&1';
+            $disabled = array_filter(
+                array_map('trim', explode(',', strtolower((string)ini_get('disable_functions')))),
+                static fn ($x) => $x !== ''
+            );
+            $execOk       = function_exists('exec') && !in_array('exec', $disabled, true);
+            $shellExecOk  = function_exists('shell_exec') && !in_array('shell_exec', $disabled, true);
+
+            $output = '';
+            $code   = -1;
+            if ($execOk) {
+                exec($cmd, $lines, $code);
+                $output = implode("\n", $lines);
+            } elseif ($shellExecOk) {
+                $output = (string)shell_exec($cmd);
+                $code   = 0;
+            }
+            @file_put_contents(__DIR__ . '/xpoz_parser.log', date('[Y-m-d H:i:s] ') . "single @{$username} code={$code}\n{$output}\n\n", FILE_APPEND);
+
+            if ($output === '' && $code === -1) {
+                $flash = 'Не удалось запустить парсер: exec/shell_exec отключены в php.ini.';
+            } elseif ($output === '' && $code !== 0) {
+                $flash = "Парсер не вернул вывод (код {$code}). Проверьте путь к PHP CLI (на сервере задайте переменную окружения PHP_CLI, например /usr/bin/php8.4).";
+            } elseif (str_contains($output, 'не найден в') || str_contains($output, 'результат не сохран')) {
+                $flash = "Аккаунт @{$username} не найден в таблице " . DB_TABLE . " (или не совпал с полем instagram_parcing). Добавьте строку в базу или введите username как в таблице. См. xpoz_parser.log.";
+            } elseif ($code !== 0) {
+                $flash = "Анализ @{$username} завершился с ошибкой (код {$code}). Полный вывод в xpoz_parser.log.";
+            } else {
+                $flash = "Анализ @{$username} завершён, результат записан в " . DB_TABLE . ".";
+            }
         }
     }
 
@@ -55,22 +106,26 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $batchFrom = max(0, (int)($_POST['batch_from'] ?? 0));
         $batchTo   = max(0, (int)($_POST['batch_to'] ?? 0));
         $reanalyze = !empty($_POST['reanalyze']);
+        $requireEmail = !empty($_POST['require_email']);
         $logFile   = __DIR__ . '/xpoz_parser.log';
+        $phpBin    = xpoz_dashboard_php_cli();
 
         $cmds = [];
         for ($i = 0; $i < $workers; $i++) {
-            $cmd = 'php ' . escapeshellarg(__DIR__ . '/xpoz_parser.php')
+            $cmd = escapeshellarg($phpBin) . ' ' . escapeshellarg(__DIR__ . '/xpoz_parser.php')
                  . " --worker={$i} --total-workers={$workers}";
             if ($limit > 0)     $cmd .= " --limit={$limit}";
             if ($batchFrom > 0) $cmd .= " --from={$batchFrom}";
             if ($batchTo > 0)   $cmd .= " --to={$batchTo}";
             if ($reanalyze)     $cmd .= ' --reanalyze';
+            if ($requireEmail)  $cmd .= ' --require-email';
             $cmd .= " >> " . escapeshellarg($logFile) . " 2>&1 &";
             $cmds[] = $cmd;
         }
         foreach ($cmds as $c) exec($c);
         $rangeInfo = ($batchFrom > 0 || $batchTo > 0) ? " (#{$batchFrom}–#{$batchTo})" : '';
-        $flash = "Запущено {$workers} воркеров{$rangeInfo}. Лог: xpoz_parser.log";
+        $emailNote = $requireEmail ? ' Только Instagram со строкой email.' : '';
+        $flash = "Запущено {$workers} воркеров{$rangeInfo}.{$emailNote} Лог: xpoz_parser.log";
     }
 
     if ($action === 'stop_batch') {
@@ -502,6 +557,9 @@ tr:hover td{background:#252a3a}
                     <input type="number" name="batch_from" value="0" min="0" title="Начать с аккаунта # (1-based, 0 = с начала)" style="width:90px">
                     <label>По</label>
                     <input type="number" name="batch_to" value="0" min="0" title="Закончить на аккаунте # (0 = до конца)" style="width:90px">
+                </div>
+                <div class="form-row">
+                    <label title="Сайт, YouTube About, Twitter bio или Instagram bio (не NOT_FOUND/ошибки)"><input type="checkbox" name="require_email" value="1" checked style="margin-right:4px">Только со строкой email</label>
                 </div>
                 <div class="form-row">
                     <label><input type="checkbox" name="reanalyze" style="margin-right:4px">Перезапуск</label>
