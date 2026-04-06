@@ -40,6 +40,65 @@ function isRealEmail(?string $v): bool
     return true;
 }
 
+// ── CSV export ───────────────────────────────────────────────────────────────
+
+if (isset($_GET['export']) && $_GET['export'] === 'csv') {
+    $csvRows = $pdo->query("
+        SELECT
+            `instructor`,
+            `instagram_parcing`,
+            `email_parcing`,
+            `youtube_parcing_email`,
+            `twitter_parcing_email`
+        FROM `" . DB_TABLE . "`
+        WHERE instagram_parcing IS NOT NULL AND instagram_parcing != ''
+          AND (
+            (email_parcing IS NOT NULL AND email_parcing NOT IN ('NOT_FOUND','JS_REQUIRED','SOCIAL_URL','UNAVAILABLE')
+             AND email_parcing NOT LIKE 'HTTP_%' AND email_parcing NOT LIKE 'ERROR:%' AND email_parcing NOT LIKE 'RETRY:%')
+            OR (youtube_parcing_email IS NOT NULL AND youtube_parcing_email NOT IN ('NOT_FOUND','INVALID_URL'))
+            OR (twitter_parcing_email IS NOT NULL AND twitter_parcing_email NOT IN ('NOT_FOUND','INVALID_URL'))
+          )
+        ORDER BY `_rowid` ASC
+    ")->fetchAll();
+
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="instagram_emails_summary_' . date('Y-m-d') . '.csv"');
+
+    $out = fopen('php://output', 'w');
+    fprintf($out, chr(0xEF) . chr(0xBB) . chr(0xBF));
+    fputcsv($out, ['instagram', 'email_site', 'email_youtube', 'email_twitter', 'instructor']);
+
+    foreach ($csvRows as $r) {
+        $igRaw = $r['instagram_parcing'] ?? '';
+        $igUrls = normalizeInstagramFieldToUrls($igRaw);
+        $igNames = [];
+        foreach ($igUrls as $u) {
+            $n = instagramNormalizedUrlToUsername($u);
+            if ($n !== '') $igNames[] = $n;
+        }
+        if (empty($igNames)) {
+            $n = instagramRawToUsername($igRaw);
+            if ($n !== '') $igNames[] = $n;
+        }
+        if (empty($igNames)) {
+            $igNames[] = preg_replace('#https?://(www\.)?instagram\.com/#', '', explode(',', $igRaw)[0]);
+            $igNames[0] = rtrim($igNames[0], '/');
+        }
+
+        $siteEmail = isRealEmail($r['email_parcing']) ? $r['email_parcing'] : '';
+        $ytEmail   = isRealEmail($r['youtube_parcing_email']) ? $r['youtube_parcing_email'] : '';
+        $twEmail   = isRealEmail($r['twitter_parcing_email']) ? $r['twitter_parcing_email'] : '';
+        $instructor = $r['instructor'] ?? '';
+
+        foreach ($igNames as $igName) {
+            fputcsv($out, [$igName, $siteEmail, $ytEmail, $twEmail, $instructor]);
+        }
+    }
+
+    fclose($out);
+    exit;
+}
+
 // ── Stats ────────────────────────────────────────────────────────────────────
 
 $stats = $pdo->query("
@@ -270,6 +329,21 @@ $rows = $pdo->query("
 
         .back-link:hover { text-decoration: underline; }
 
+        .csv-btn {
+            display: inline-block;
+            padding: 10px 22px;
+            background: #166534;
+            color: #4ade80;
+            border: 1px solid #22c55e;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: background 0.2s;
+        }
+
+        .csv-btn:hover { background: #15803d; }
+
         .src-tag {
             display: inline-block;
             font-size: 0.65rem;
@@ -286,9 +360,14 @@ $rows = $pdo->query("
 </head>
 <body>
 
-<a href="dashboard.php" class="back-link">&larr; Dashboard</a>
-<h1>Instagram + Email — Сводная таблица</h1>
-<div class="subtitle"><?= date('d.m.Y H:i:s') ?></div>
+<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:20px;">
+    <div>
+        <a href="dashboard.php" class="back-link" style="margin-bottom:8px;">&larr; Dashboard</a>
+        <h1>Instagram + Email — Сводная таблица</h1>
+        <div class="subtitle"><?= date('d.m.Y H:i:s') ?></div>
+    </div>
+    <a href="?export=csv" class="csv-btn">&#8615; Скачать CSV</a>
+</div>
 
 <!-- Итоговая строка -->
 <div class="summary-bar">
