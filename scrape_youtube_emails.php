@@ -24,7 +24,7 @@ define('REQUEST_TIMEOUT',  10);
 define('CONNECT_TIMEOUT',  5);
 define('FETCH_BATCH_SIZE', 100);
 define('MAX_RETRIES',      3);
-define('MAX_HTML_BYTES',   512000);
+define('MAX_HTML_BYTES',   3145728);
 
 const BROWSER_PROFILES = [
     ['ua' => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',        'ch_ua' => '"Google Chrome";v="136", "Chromium";v="136", "Not.A/Brand";v="99"', 'ch_mobile' => '?0', 'platform' => '"macOS"'],
@@ -224,58 +224,100 @@ function isValidEmail(string $email): bool
 }
 
 /**
- * Extract emails from YouTube page HTML.
- * YouTube About pages embed channel description inside JSON in <script> tags.
+ * Parse ytInitialData JSON from YouTube page HTML.
+ * Returns ['description' => string, 'links' => array, 'has_business_email' => bool]
  */
-function extractYoutubeEmails(string $html): array
+function parseYoutubeAbout(string $html): array
 {
-    $emails = [];
+    $result = ['description' => '', 'links' => [], 'has_business_email' => false];
 
-    // Method 1: extract from ytInitialData JSON (channel description)
-    if (preg_match('/var\s+ytInitialData\s*=\s*(\{.+?\});\s*<\/script>/s', $html, $m)) {
-        $jsonStr = $m[1];
-        // Look for email patterns in the JSON string directly (faster than parsing huge JSON)
-        preg_match_all('/[a-zA-Z0-9._%+\-]{1,64}@[a-zA-Z0-9.\-]{1,255}\.[a-zA-Z]{2,24}/', $jsonStr, $matches);
-        foreach ($matches[0] as $email) {
-            $email = strtolower(trim($email));
-            if (isValidEmail($email)) {
-                $emails[] = $email;
+    if (!preg_match('/var\s+ytInitialData\s*=\s*(\{.+?\});\s*<\/script>/s', $html, $m)) {
+        return $result;
+    }
+
+    $data = @json_decode($m[1], true);
+    if (!is_array($data)) {
+        return $result;
+    }
+
+    $aboutModel = findNestedKey($data, 'aboutChannelViewModel');
+    if ($aboutModel === null) {
+        return $result;
+    }
+
+    $result['description'] = $aboutModel['description'] ?? '';
+
+    if (isset($aboutModel['signInForBusinessEmail'])) {
+        $result['has_business_email'] = true;
+    }
+
+    foreach ($aboutModel['links'] ?? [] as $link) {
+        $vm = $link['channelExternalLinkViewModel'] ?? null;
+        if ($vm) {
+            $title = $vm['title']['content'] ?? '';
+            $url   = $vm['link']['content']  ?? '';
+            if ($url !== '') {
+                $result['links'][] = ['title' => $title, 'url' => $url];
             }
         }
     }
 
-    // Method 2: regex over entire HTML for emails (catches description, meta tags, etc.)
-    preg_match_all('/[a-zA-Z0-9._%+\-]{1,64}@[a-zA-Z0-9.\-]{1,255}\.[a-zA-Z]{2,24}/', $html, $matches);
+    return $result;
+}
+
+function findNestedKey(array $data, string $key): ?array
+{
+    foreach ($data as $k => $v) {
+        if ($k === $key && is_array($v)) {
+            return $v;
+        }
+        if (is_array($v)) {
+            $found = findNestedKey($v, $key);
+            if ($found !== null) {
+                return $found;
+            }
+        }
+    }
+    return null;
+}
+
+function extractEmailsFromText(string $text): array
+{
+    $emails = [];
+    preg_match_all('/[a-zA-Z0-9._%+\-]{1,64}@[a-zA-Z0-9.\-]{1,255}\.[a-zA-Z]{2,24}/', $text, $matches);
     foreach ($matches[0] as $email) {
         $email = strtolower(trim($email));
         if (isValidEmail($email)) {
             $emails[] = $email;
         }
     }
+    return $emails;
+}
 
-    // Method 3: URL-encoded emails (%40 = @)
-    if (str_contains($html, '%40')) {
-        $decoded = rawurldecode($html);
-        preg_match_all('/[a-zA-Z0-9._%+\-]{1,64}@[a-zA-Z0-9.\-]{1,255}\.[a-zA-Z]{2,24}/', $decoded, $matches);
-        foreach ($matches[0] as $email) {
-            $email = strtolower(trim($email));
-            if (isValidEmail($email)) {
-                $emails[] = $email;
-            }
-        }
+/**
+ * Extract emails from YouTube page HTML.
+ * Parses ytInitialData JSON to get channel description and external links,
+ * then searches for email patterns in the description text.
+ */
+function extractYoutubeEmails(string $html): array
+{
+    $emails = [];
+
+    $about = parseYoutubeAbout($html);
+
+    // Extract emails from channel description
+    if ($about['description'] !== '') {
+        $emails = array_merge($emails, extractEmailsFromText($about['description']));
     }
 
-    // Method 4: unicode-escaped emails (\u0040 = @)
-    if (str_contains($html, '\\u0040')) {
-        $unescaped = str_replace('\\u0040', '@', $html);
-        preg_match_all('/[a-zA-Z0-9._%+\-]{1,64}@[a-zA-Z0-9.\-]{1,255}\.[a-zA-Z]{2,24}/', $unescaped, $matches);
-        foreach ($matches[0] as $email) {
-            $email = strtolower(trim($email));
-            if (isValidEmail($email)) {
-                $emails[] = $email;
-            }
-        }
+    // Extract emails from link URLs and titles
+    foreach ($about['links'] as $link) {
+        $emails = array_merge($emails, extractEmailsFromText($link['url']));
+        $emails = array_merge($emails, extractEmailsFromText($link['title']));
     }
+
+    // Fallback: regex over raw HTML for emails (meta tags, etc.)
+    $emails = array_merge($emails, extractEmailsFromText($html));
 
     return array_values(array_unique($emails));
 }
@@ -336,6 +378,7 @@ $processed    = 0;
 $foundEmails  = 0;
 $noEmail      = 0;
 $errors       = 0;
+$hasBizEmail  = 0;
 $lastRowId    = 0;
 
 while (true) {
@@ -391,6 +434,20 @@ while (true) {
                 continue;
             }
 
+            $about = parseYoutubeAbout($result['html']);
+            if ($about['has_business_email']) {
+                $hasBizEmail++;
+                echo "  [biz-email: hidden behind login]\n";
+            }
+            if ($about['description'] !== '') {
+                $descLen = strlen($about['description']);
+                echo "  Описание: {$descLen} символов\n";
+            }
+            if (!empty($about['links'])) {
+                $linkNames = array_map(fn($l) => $l['title'], $about['links']);
+                echo "  Ссылки: " . implode(', ', $linkNames) . "\n";
+            }
+
             $emails = extractYoutubeEmails($result['html']);
             foreach ($emails as $e) {
                 if (!in_array($e, $allEmails, true)) {
@@ -422,4 +479,5 @@ echo "{$workerLabel}Total channels       : $total\n";
 echo "{$workerLabel}Processed            : $processed\n";
 echo "{$workerLabel}With emails found    : $foundEmails\n";
 echo "{$workerLabel}No email found       : $noEmail\n";
+echo "{$workerLabel}Has biz email (hidden): $hasBizEmail\n";
 echo "{$workerLabel}Errors               : $errors\n";
