@@ -96,6 +96,50 @@ $recentInstaEmail = $pdo->query("
     LIMIT 20
 ")->fetchAll();
 
+// ── YouTube Email статистика ─────────────────────────────────────────────────
+$ytStats = $pdo->query("
+    SELECT
+        COUNT(CASE WHEN youtube_parcing IS NOT NULL AND youtube_parcing != '' THEN 1 END) AS total_yt,
+        COUNT(CASE WHEN youtube_parcing_email IS NOT NULL
+                    AND youtube_parcing_email NOT IN ('NOT_FOUND','INVALID_URL') THEN 1 END) AS yt_with_email,
+        COUNT(CASE WHEN (youtube_parcing IS NOT NULL AND youtube_parcing != '')
+                    AND youtube_parcing_email = 'NOT_FOUND' THEN 1 END) AS yt_not_found,
+        COUNT(CASE WHEN (youtube_parcing IS NOT NULL AND youtube_parcing != '')
+                    AND youtube_parcing_email IS NULL THEN 1 END) AS yt_pending
+    FROM `" . DB_TABLE . "`
+")->fetch();
+
+$recentYtEmail = $pdo->query("
+    SELECT instructor, youtube_parcing, youtube_parcing_email
+    FROM `" . DB_TABLE . "`
+    WHERE youtube_parcing_email IS NOT NULL
+      AND youtube_parcing_email NOT IN ('NOT_FOUND','INVALID_URL')
+    ORDER BY _rowid DESC
+    LIMIT 10
+")->fetchAll();
+
+// ── Twitter Email статистика ─────────────────────────────────────────────────
+$twStats = $pdo->query("
+    SELECT
+        COUNT(CASE WHEN twitter_parcing IS NOT NULL AND twitter_parcing != '' THEN 1 END) AS total_tw,
+        COUNT(CASE WHEN twitter_parcing_email IS NOT NULL
+                    AND twitter_parcing_email NOT IN ('NOT_FOUND','INVALID_URL') THEN 1 END) AS tw_with_email,
+        COUNT(CASE WHEN (twitter_parcing IS NOT NULL AND twitter_parcing != '')
+                    AND twitter_parcing_email = 'NOT_FOUND' THEN 1 END) AS tw_not_found,
+        COUNT(CASE WHEN (twitter_parcing IS NOT NULL AND twitter_parcing != '')
+                    AND twitter_parcing_email IS NULL THEN 1 END) AS tw_pending
+    FROM `" . DB_TABLE . "`
+")->fetch();
+
+$recentTwEmail = $pdo->query("
+    SELECT instructor, twitter_parcing, twitter_parcing_email
+    FROM `" . DB_TABLE . "`
+    WHERE twitter_parcing_email IS NOT NULL
+      AND twitter_parcing_email NOT IN ('NOT_FOUND','INVALID_URL')
+    ORDER BY _rowid DESC
+    LIMIT 10
+")->fetchAll();
+
 // ── HTTP коды ошибок ───────────────────────────────────────────────────────
 $httpErrors = $pdo->query("
     SELECT email_parcing AS code, COUNT(*) AS cnt
@@ -611,6 +655,118 @@ $refreshSec = 30;
             <?php endforeach; ?>
         </tbody>
     </table>
+</div>
+
+<!-- YouTube Email блок -->
+<div class="panel" style="margin-bottom: 28px;">
+    <div class="section-title">YouTube каналы → Email</div>
+    <div style="display:grid; grid-template-columns: repeat(4,1fr); gap:12px; margin-bottom:20px;">
+        <div class="social-card">
+            <div class="s-name">Всего YouTube</div>
+            <div class="s-val" style="color:#f87171"><?= number_format((int)$ytStats['total_yt'], 0, '.', ' ') ?></div>
+        </div>
+        <div class="social-card">
+            <div class="s-name">Найдено Email</div>
+            <div class="s-val" style="color:#4ade80"><?= number_format((int)$ytStats['yt_with_email'], 0, '.', ' ') ?></div>
+            <div style="font-size:0.72rem; color:#64748b; margin-top:4px;">
+                <?= $ytStats['total_yt'] > 0 ? round($ytStats['yt_with_email'] / $ytStats['total_yt'] * 100, 1) : 0 ?>%
+            </div>
+        </div>
+        <div class="social-card">
+            <div class="s-name">Не найдено</div>
+            <div class="s-val" style="color:#fbbf24"><?= number_format((int)$ytStats['yt_not_found'], 0, '.', ' ') ?></div>
+        </div>
+        <div class="social-card">
+            <div class="s-name">В очереди</div>
+            <div class="s-val" style="color:#60a5fa"><?= number_format((int)$ytStats['yt_pending'], 0, '.', ' ') ?></div>
+        </div>
+    </div>
+    <?php if (!empty($recentYtEmail)): ?>
+    <table>
+        <thead>
+            <tr><th>Инструктор</th><th>YouTube</th><th>Email</th></tr>
+        </thead>
+        <tbody>
+            <?php foreach ($recentYtEmail as $row):
+                $ytUrl = $row['youtube_parcing'] ?? '';
+                $ytShort = preg_replace('#https?://(www\.)?youtube\.com/#', '', $ytUrl);
+                $ytShort = preg_replace('/[,;].*$/', '', $ytShort);
+                $ytShort = rtrim($ytShort, '/');
+            ?>
+            <tr>
+                <td class="instructor-cell" title="<?= htmlspecialchars($row['instructor'] ?? '') ?>">
+                    <?= htmlspecialchars(mb_strimwidth($row['instructor'] ?? '', 0, 28, '…')) ?>
+                </td>
+                <td style="font-size:0.78rem; max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                    <a href="<?= htmlspecialchars(explode(',', $ytUrl)[0]) ?>" target="_blank"
+                       style="color:#f87171; text-decoration:none;" title="<?= htmlspecialchars($ytUrl) ?>">
+                        <?= htmlspecialchars(mb_strimwidth($ytShort, 0, 24, '…')) ?>
+                    </a>
+                </td>
+                <td class="email-cell" style="font-size:0.78rem;">
+                    <?= htmlspecialchars(str_replace(';', ' ', $row['youtube_parcing_email'] ?? '')) ?>
+                </td>
+            </tr>
+            <?php endforeach; ?>
+        </tbody>
+    </table>
+    <?php endif; ?>
+</div>
+
+<!-- Twitter/X Email блок -->
+<div class="panel" style="margin-bottom: 28px;">
+    <div class="section-title">Twitter/X → Email</div>
+    <div style="display:grid; grid-template-columns: repeat(4,1fr); gap:12px; margin-bottom:20px;">
+        <div class="social-card">
+            <div class="s-name">Всего Twitter</div>
+            <div class="s-val" style="color:#94a3b8"><?= number_format((int)$twStats['total_tw'], 0, '.', ' ') ?></div>
+        </div>
+        <div class="social-card">
+            <div class="s-name">Найдено Email</div>
+            <div class="s-val" style="color:#4ade80"><?= number_format((int)$twStats['tw_with_email'], 0, '.', ' ') ?></div>
+            <div style="font-size:0.72rem; color:#64748b; margin-top:4px;">
+                <?= $twStats['total_tw'] > 0 ? round($twStats['tw_with_email'] / $twStats['total_tw'] * 100, 1) : 0 ?>%
+            </div>
+        </div>
+        <div class="social-card">
+            <div class="s-name">Не найдено</div>
+            <div class="s-val" style="color:#fbbf24"><?= number_format((int)$twStats['tw_not_found'], 0, '.', ' ') ?></div>
+        </div>
+        <div class="social-card">
+            <div class="s-name">В очереди</div>
+            <div class="s-val" style="color:#60a5fa"><?= number_format((int)$twStats['tw_pending'], 0, '.', ' ') ?></div>
+        </div>
+    </div>
+    <?php if (!empty($recentTwEmail)): ?>
+    <table>
+        <thead>
+            <tr><th>Инструктор</th><th>Twitter</th><th>Email</th></tr>
+        </thead>
+        <tbody>
+            <?php foreach ($recentTwEmail as $row):
+                $twUrl = $row['twitter_parcing'] ?? '';
+                $twHandle = preg_replace('#https?://(www\.)?(twitter\.com|x\.com)/#', '@', $twUrl);
+                $twHandle = preg_replace('/[,;].*$/', '', $twHandle);
+                $twHandle = rtrim($twHandle, '/');
+            ?>
+            <tr>
+                <td class="instructor-cell" title="<?= htmlspecialchars($row['instructor'] ?? '') ?>">
+                    <?= htmlspecialchars(mb_strimwidth($row['instructor'] ?? '', 0, 28, '…')) ?>
+                </td>
+                <td style="font-size:0.78rem;">
+                    <a href="<?= htmlspecialchars(explode(',', $twUrl)[0]) ?>" target="_blank"
+                       style="color:#94a3b8; text-decoration:none;">
+                        <?= htmlspecialchars(mb_strimwidth($twHandle, 0, 20, '…')) ?>
+                    </a>
+                </td>
+                <td class="email-cell" style="font-size:0.78rem;">
+                    <?= htmlspecialchars(str_replace(';', ' ', $row['twitter_parcing_email'] ?? '')) ?>
+                </td>
+            </tr>
+            <?php endforeach; ?>
+        </tbody>
+    </table>
+    <?php endif; ?>
 </div>
 
 <div class="two-col">
