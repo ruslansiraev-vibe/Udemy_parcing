@@ -485,6 +485,9 @@ function normalizeTaxonomyResult(
     }
 
     $c4Reason = trim((string)($merged['c4_reason'] ?? ''));
+    if ($c4Reason === '') {
+        $c4Reason = trim((string)($merged['reasoning'] ?? $fallback['reasoning'] ?? ''));
+    }
 
     return [
         'has_signals'           => (bool)($merged['has_signals'] ?? (bool)$signals),
