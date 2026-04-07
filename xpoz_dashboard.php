@@ -54,6 +54,21 @@ function xpoz_dashboard_php_cli(): string
     return 'php';
 }
 
+function xpoz_dashboard_log_file(): string
+{
+    return __DIR__ . DIRECTORY_SEPARATOR . 'xpoz_parser.log';
+}
+
+/** Можно ли создать/дописать лог (иначе >> из shell тоже молча не сработает). */
+function xpoz_dashboard_log_is_writable(string $path): bool
+{
+    if (is_file($path)) {
+        return is_writable($path);
+    }
+
+    return is_writable(dirname($path));
+}
+
 // ── Actions (POST) ───────────────────────────────────────────────────────────
 
 $flash = '';
@@ -107,25 +122,48 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $batchTo   = max(0, (int)($_POST['batch_to'] ?? 0));
         $reanalyze = !empty($_POST['reanalyze']);
         $requireEmail = !empty($_POST['require_email']);
-        $logFile   = __DIR__ . '/xpoz_parser.log';
-        $phpBin    = xpoz_dashboard_php_cli();
+        $logFile      = xpoz_dashboard_log_file();
+        $phpBin       = xpoz_dashboard_php_cli();
 
-        $cmds = [];
-        for ($i = 0; $i < $workers; $i++) {
-            $cmd = escapeshellarg($phpBin) . ' ' . escapeshellarg(__DIR__ . '/xpoz_parser.php')
-                 . " --worker={$i} --total-workers={$workers}";
-            if ($limit > 0)     $cmd .= " --limit={$limit}";
-            if ($batchFrom > 0) $cmd .= " --from={$batchFrom}";
-            if ($batchTo > 0)   $cmd .= " --to={$batchTo}";
-            if ($reanalyze)     $cmd .= ' --reanalyze';
-            if ($requireEmail)  $cmd .= ' --require-email';
-            $cmd .= " >> " . escapeshellarg($logFile) . " 2>&1 &";
-            $cmds[] = $cmd;
+        if (!xpoz_dashboard_log_is_writable($logFile)) {
+            $flash = 'Лог недоступен для записи: ' . $logFile
+                . ' — воркеры не запущены. На сервере: sudo touch … && sudo chown www-data:www-data … && sudo chmod 664 …'
+                . ' (или chown каталога проекта под пользователя веб-сервера).';
+        } else {
+            $marker = "\n" . date('c') . " [dashboard] batch: workers={$workers} limit={$limit} from={$batchFrom} to={$batchTo} reanalyze="
+                . ($reanalyze ? '1' : '0') . ' require_email=' . ($requireEmail ? '1' : '0') . "\n";
+            @file_put_contents($logFile, $marker, FILE_APPEND | LOCK_EX);
+
+            $script = __DIR__ . '/xpoz_parser.php';
+            $cmds   = [];
+            for ($i = 0; $i < $workers; $i++) {
+                $args = ' --worker=' . (int)$i . ' --total-workers=' . (int)$workers;
+                if ($limit > 0) {
+                    $args .= ' --limit=' . (int)$limit;
+                }
+                if ($batchFrom > 0) {
+                    $args .= ' --from=' . (int)$batchFrom;
+                }
+                if ($batchTo > 0) {
+                    $args .= ' --to=' . (int)$batchTo;
+                }
+                if ($reanalyze) {
+                    $args .= ' --reanalyze';
+                }
+                if ($requireEmail) {
+                    $args .= ' --require-email';
+                }
+                $cmds[] = 'cd ' . escapeshellarg(__DIR__)
+                    . ' && nohup ' . escapeshellarg($phpBin) . ' ' . escapeshellarg($script) . $args
+                    . ' >> ' . escapeshellarg($logFile) . ' 2>&1 &';
+            }
+            foreach ($cmds as $c) {
+                exec($c);
+            }
+            $rangeInfo = ($batchFrom > 0 || $batchTo > 0) ? " (#{$batchFrom}–#{$batchTo})" : '';
+            $emailNote = $requireEmail ? ' Только Instagram со строкой email.' : '';
+            $flash = "Запущено {$workers} воркеров{$rangeInfo}.{$emailNote} Лог: " . basename($logFile);
         }
-        foreach ($cmds as $c) exec($c);
-        $rangeInfo = ($batchFrom > 0 || $batchTo > 0) ? " (#{$batchFrom}–#{$batchTo})" : '';
-        $emailNote = $requireEmail ? ' Только Instagram со строкой email.' : '';
-        $flash = "Запущено {$workers} воркеров{$rangeInfo}.{$emailNote} Лог: xpoz_parser.log";
     }
 
     if ($action === 'stop_batch') {
@@ -277,11 +315,27 @@ $dataStmt->execute($params);
 $rows = $dataStmt->fetchAll();
 
 // Log tail
-$logFile = __DIR__ . '/xpoz_parser.log';
-$logTail = '';
-if (file_exists($logFile)) {
+$logFile      = xpoz_dashboard_log_file();
+$logTail      = '';
+$logWritable  = xpoz_dashboard_log_is_writable($logFile);
+if (file_exists($logFile) && filesize($logFile) > 0) {
     $lines = file($logFile);
-    $logTail = implode('', array_slice($lines, -40));
+    if ($lines !== false) {
+        $logTail = implode('', array_slice($lines, -40));
+    }
+}
+if ($logTail === '') {
+    if (!$logWritable) {
+        $logTail = "Лог пустой или недоступен для записи.\n\n"
+            . "Частая причина: PHP-FPM работает как www-data, а каталог проекта принадлежит root без прав на запись.\n\n"
+            . "На сервере (подставьте свой путь):\n"
+            . "  sudo touch " . $logFile . "\n"
+            . "  sudo chown www-data:www-data " . $logFile . "\n"
+            . "  sudo chmod 664 " . $logFile . "\n"
+            . "или: sudo chown -R www-data:www-data " . dirname($logFile) . "\n";
+    } else {
+        $logTail = "Пока нет строк в логе. Запустите batch или одиночный анализ — вывод пишется в:\n" . $logFile;
+    }
 }
 
 $progress = $stats['total_ig'] > 0 ? round($stats['scraped'] / $stats['total_ig'] * 100, 1) : 0;
