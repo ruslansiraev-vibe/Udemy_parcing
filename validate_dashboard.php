@@ -208,14 +208,7 @@ $stats = $pdo->query("
 $eligible = (int)$pdo->query("
     SELECT COUNT(*) FROM `" . DB_TABLE . "`
     WHERE `instructor` IS NOT NULL AND TRIM(`instructor`) != ''
-      AND (
-        (`email_parcing` IS NOT NULL AND TRIM(`email_parcing`) != ''
-         AND `email_parcing` NOT IN ('NOT_FOUND','JS_REQUIRED','SOCIAL_URL','UNAVAILABLE')
-         AND `email_parcing` NOT LIKE 'HTTP_%' AND `email_parcing` NOT LIKE 'ERROR:%' AND `email_parcing` NOT LIKE 'RETRY:%')
-        OR (`website_parcing` IS NOT NULL AND TRIM(`website_parcing`) != '')
-        OR (`instagram_parcing` IS NOT NULL AND TRIM(`instagram_parcing`) != '')
-        OR (`linkedin_parcing` IS NOT NULL AND TRIM(`linkedin_parcing`) != '')
-      )
+      AND `instagram_parcing` IS NOT NULL AND TRIM(`instagram_parcing`) != ''
 ")->fetchColumn();
 
 $progress = $eligible > 0 ? round($stats['validated'] / $eligible * 100, 1) : 0;
