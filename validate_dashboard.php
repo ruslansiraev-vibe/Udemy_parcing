@@ -115,6 +115,25 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         }
     }
 
+    if ($action === 'run_all') {
+        $logFile = validate_log_file();
+        $phpBin  = validate_php_cli();
+
+        if (!validate_log_is_writable($logFile)) {
+            $flash = 'Лог недоступен для записи: ' . $logFile;
+        } else {
+            $marker = "\n" . date('c') . " [dashboard] RUN ALL: revalidate from scratch\n";
+            @file_put_contents($logFile, $marker, FILE_APPEND | LOCK_EX);
+
+            $script = __DIR__ . '/validate_leads.php';
+            $cmd = 'cd ' . escapeshellarg(__DIR__)
+                . ' && nohup ' . escapeshellarg($phpBin) . ' ' . escapeshellarg($script) . ' --revalidate'
+                . ' >> ' . escapeshellarg($logFile) . ' 2>&1 &';
+            exec($cmd);
+            $flash = "Запущена полная валидация всех строк с Instagram. Лог: " . basename($logFile);
+        }
+    }
+
     if ($action === 'stop_batch') {
         exec("pkill -f 'validate_leads.php' 2>/dev/null");
         $flash = 'Процесс валидации остановлен.';
@@ -528,13 +547,19 @@ tr:hover td{background:#252a3a}
             </div>
         </form>
 
-        <div class="section-title" style="margin-top:20px">Batch валидация</div>
+        <div class="section-title" style="margin-top:20px">Запустить все</div>
         <?php if ($isRunning): ?>
             <form method="POST" style="margin-bottom:8px">
                 <input type="hidden" name="action" value="stop_batch">
                 <button type="submit" class="btn btn-danger">Остановить</button>
             </form>
         <?php else: ?>
+            <form method="POST" style="margin-bottom:12px" onsubmit="return confirm('Запустить валидацию всех <?= $nf($eligible) ?> строк с Instagram с нуля?')">
+                <input type="hidden" name="action" value="run_all">
+                <button type="submit" class="btn btn-primary" style="width:100%;padding:10px 14px;font-size:0.88rem">Запустить все (<?= $nf($eligible) ?> строк)</button>
+            </form>
+
+        <div class="section-title" style="margin-top:16px">Batch валидация (выборочно)</div>
             <form method="POST">
                 <input type="hidden" name="action" value="start_batch">
                 <div class="form-row">
