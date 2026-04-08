@@ -406,7 +406,7 @@ tr:hover td{background:#252a3a}
 .breakdown-item .b-val{font-size:1.1rem;font-weight:700;color:#fff}
 .breakdown-item .b-label{font-size:0.65rem;color:#64748b;margin-top:2px}
 .trunc{max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.reason-cell{font-size:0.7rem;color:#94a3b8;max-width:200px;white-space:normal;line-height:1.4}
+.reason-cell{font-size:0.7rem;color:#94a3b8;white-space:normal;line-height:1.4;min-width:250px}
 .match-cell{text-align:center}
 </style>
 </head>
@@ -667,7 +667,7 @@ tr:hover td{background:#252a3a}
             <td class="match-cell" title="<?= $h($r['validate_linkedin_reason']) ?>"><?= matchIcon($r['validate_linkedin_match'] ?? '') ?></td>
             <td><?= $r['validate_confidence'] !== null ? confBar((float)$r['validate_confidence']) : '<span style="color:#334155">&mdash;</span>' ?></td>
             <td><?= $r['validate_verdict'] ? verdictTag($r['validate_verdict']) : '<span style="color:#334155">&mdash;</span>' ?></td>
-            <td class="reason-cell" title="<?= $h($r['validate_summary']) ?>"><?= $h(mb_strimwidth($r['validate_summary'] ?? '', 0, 80, '…')) ?></td>
+            <td class="reason-cell"><?= $h($r['validate_summary'] ?? '') ?></td>
         </tr>
         <?php endforeach; ?>
         <?php if (!$rows): ?>
