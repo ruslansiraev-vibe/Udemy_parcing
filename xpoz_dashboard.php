@@ -155,7 +155,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 if ($requireEmail) {
                     $args .= ' --require-email';
                 }
-                if ($batchVerdict !== '' && in_array($batchVerdict, ['valid','suspicious','mismatch','insufficient_data'], true)) {
+                if ($batchVerdict !== '') {
                     $args .= ' --verdict=' . escapeshellarg($batchVerdict);
                 }
                 $cmds[] = 'cd ' . escapeshellarg(__DIR__)
@@ -291,8 +291,9 @@ elseif (str_starts_with($filter, 'icp_')) {
     $where .= " AND `xpoz_icp` = " . $pdo->quote($icpVal);
 }
 
-$allowedVerdicts = ['valid','suspicious','mismatch','insufficient_data'];
-if ($verdict !== '' && in_array($verdict, $allowedVerdicts, true)) {
+if ($verdict === '__null') {
+    $where .= " AND (`validate_verdict` IS NULL OR TRIM(`validate_verdict`) = '')";
+} elseif ($verdict !== '' && in_array($verdict, ['valid','suspicious','mismatch','insufficient_data'], true)) {
     $where .= " AND `validate_verdict` = " . $pdo->quote($verdict);
 }
 
@@ -632,6 +633,7 @@ tr:hover td{background:#252a3a}
                     <label>Verdict</label>
                     <select name="batch_verdict" style="background:#0f1117;border:1px solid #2d3148;border-radius:6px;padding:5px 10px;color:#e2e8f0;font-size:0.82rem;flex:1">
                         <option value="">Все</option>
+                        <option value="__null">— не задан</option>
                         <option value="valid">valid</option>
                         <option value="suspicious">suspicious</option>
                         <option value="mismatch">mismatch</option>
@@ -690,6 +692,7 @@ tr:hover td{background:#252a3a}
             <input type="text" name="search" value="<?= $h($search) ?>" placeholder="Поиск...">
             <select name="verdict" onchange="this.form.submit()" style="padding:6px 10px;border-radius:6px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;font-size:0.82rem">
                 <option value="">Verdict: все</option>
+                <option value="__null" <?= $verdict==='__null'?'selected':'' ?>>— не задан</option>
                 <option value="valid" <?= $verdict==='valid'?'selected':'' ?>>valid</option>
                 <option value="suspicious" <?= $verdict==='suspicious'?'selected':'' ?>>suspicious</option>
                 <option value="mismatch" <?= $verdict==='mismatch'?'selected':'' ?>>mismatch</option>

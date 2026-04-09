@@ -1469,8 +1469,9 @@ if (!$reanalyze) {
 if ($requireEmail) {
     $eligibleCondition .= ' AND ' . trim(XPOZ_ELIGIBLE_HAS_EMAIL_SQL);
 }
-$allowedVerdicts = ['valid','suspicious','mismatch','insufficient_data'];
-if ($verdictFilter !== '' && in_array($verdictFilter, $allowedVerdicts, true)) {
+if ($verdictFilter === '__null') {
+    $eligibleCondition .= " AND (`validate_verdict` IS NULL OR TRIM(`validate_verdict`) = '')";
+} elseif ($verdictFilter !== '' && in_array($verdictFilter, ['valid','suspicious','mismatch','insufficient_data'], true)) {
     $eligibleCondition .= " AND `validate_verdict` = " . $pdo->quote($verdictFilter);
 }
 $eligibleCondition .= " AND (`_rowid` % :tw) = :wi";
