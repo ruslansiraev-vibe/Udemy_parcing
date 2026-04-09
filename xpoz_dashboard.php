@@ -69,6 +69,39 @@ function xpoz_dashboard_log_is_writable(string $path): bool
     return is_writable(dirname($path));
 }
 
+// ── AJAX: batch count ────────────────────────────────────────────────────────
+
+if (($_GET['action'] ?? '') === 'batch_count') {
+    header('Content-Type: application/json');
+    $pdo = getDb();
+    $w = "`instagram_parcing` IS NOT NULL AND TRIM(`instagram_parcing`) != ''";
+    if (empty($_GET['reanalyze'])) {
+        $w .= " AND `xpoz_scraped` IS NULL";
+    }
+    if (!empty($_GET['require_email'])) {
+        $w .= " AND (
+          (`email_parcing` IS NOT NULL AND TRIM(`email_parcing`) != ''
+           AND `email_parcing` NOT IN ('NOT_FOUND','JS_REQUIRED','SOCIAL_URL','UNAVAILABLE')
+           AND `email_parcing` NOT LIKE 'HTTP_%' AND `email_parcing` NOT LIKE 'ERROR:%' AND `email_parcing` NOT LIKE 'RETRY:%')
+          OR (`youtube_parcing_email` IS NOT NULL AND TRIM(`youtube_parcing_email`) != ''
+              AND `youtube_parcing_email` NOT IN ('NOT_FOUND','INVALID_URL'))
+          OR (`twitter_parcing_email` IS NOT NULL AND TRIM(`twitter_parcing_email`) != ''
+              AND `twitter_parcing_email` NOT IN ('NOT_FOUND','INVALID_URL'))
+          OR (`instagram_bio_email` IS NOT NULL AND TRIM(`instagram_bio_email`) != ''
+              AND `instagram_bio_email` NOT IN ('NOT_FOUND','INVALID_URL'))
+        )";
+    }
+    $v = $_GET['verdict'] ?? '';
+    if ($v === '__null') {
+        $w .= " AND (`validate_verdict` IS NULL OR TRIM(`validate_verdict`) = '')";
+    } elseif ($v !== '' && in_array($v, ['valid','suspicious','mismatch','insufficient_data'], true)) {
+        $w .= " AND `validate_verdict` = " . $pdo->quote($v);
+    }
+    $cnt = (int)$pdo->query("SELECT COUNT(*) FROM `" . DB_TABLE . "` WHERE {$w}")->fetchColumn();
+    echo json_encode(['count' => $cnt]);
+    exit;
+}
+
 // ── Actions (POST) ───────────────────────────────────────────────────────────
 
 $flash = '';
@@ -627,11 +660,11 @@ tr:hover td{background:#252a3a}
                     <input type="number" name="batch_to" value="0" min="0" title="Закончить на аккаунте # (0 = до конца)" style="width:90px">
                 </div>
                 <div class="form-row">
-                    <label title="Сайт, YouTube About, Twitter bio или Instagram bio (не NOT_FOUND/ошибки)"><input type="checkbox" name="require_email" value="1" checked style="margin-right:4px">Только со строкой email</label>
+                    <label title="Сайт, YouTube About, Twitter bio или Instagram bio (не NOT_FOUND/ошибки)"><input type="checkbox" name="require_email" id="batchEmail" value="1" checked style="margin-right:4px">Только со строкой email</label>
                 </div>
                 <div class="form-row">
                     <label>Verdict</label>
-                    <select name="batch_verdict" style="background:#0f1117;border:1px solid #2d3148;border-radius:6px;padding:5px 10px;color:#e2e8f0;font-size:0.82rem;flex:1">
+                    <select name="batch_verdict" id="batchVerdict" style="background:#0f1117;border:1px solid #2d3148;border-radius:6px;padding:5px 10px;color:#e2e8f0;font-size:0.82rem;flex:1">
                         <option value="">Все</option>
                         <option value="__null">— не задан</option>
                         <option value="valid">valid</option>
@@ -639,9 +672,10 @@ tr:hover td{background:#252a3a}
                         <option value="mismatch">mismatch</option>
                         <option value="insufficient_data">insufficient_data</option>
                     </select>
+                    <span id="batchCount" style="color:#fbbf24;font-size:0.82rem;white-space:nowrap"></span>
                 </div>
                 <div class="form-row">
-                    <label><input type="checkbox" name="reanalyze" style="margin-right:4px">Перезапуск</label>
+                    <label><input type="checkbox" name="reanalyze" id="batchReanalyze" style="margin-right:4px">Перезапуск</label>
                     <button type="submit" class="btn btn-green">Запустить batch</button>
                 </div>
             </form>
@@ -822,6 +856,36 @@ tr:hover td{background:#252a3a}
 <script>
 const lb = document.getElementById('logbox');
 if (lb) lb.scrollTop = lb.scrollHeight;
+
+(function() {
+    const sel   = document.getElementById('batchVerdict');
+    const email = document.getElementById('batchEmail');
+    const reana = document.getElementById('batchReanalyze');
+    const out   = document.getElementById('batchCount');
+    if (!sel || !out) return;
+
+    let timer = null;
+    function refresh() {
+        clearTimeout(timer);
+        timer = setTimeout(function() {
+            const p = new URLSearchParams();
+            p.set('action', 'batch_count');
+            p.set('verdict', sel.value);
+            if (email && email.checked) p.set('require_email', '1');
+            if (reana && reana.checked) p.set('reanalyze', '1');
+            out.textContent = '…';
+            fetch('?' + p.toString())
+                .then(r => r.json())
+                .then(d => { out.textContent = d.count.toLocaleString('ru-RU') + ' записей'; })
+                .catch(() => { out.textContent = ''; });
+        }, 150);
+    }
+
+    sel.addEventListener('change', refresh);
+    if (email) email.addEventListener('change', refresh);
+    if (reana) reana.addEventListener('change', refresh);
+    refresh();
+})();
 </script>
 </body>
 </html>
