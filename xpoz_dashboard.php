@@ -298,6 +298,7 @@ $stats = $pdo->query("
         COUNT(CASE WHEN `xpoz_low_performing_reels` = 1 THEN 1 END) AS c2_pass,
         COUNT(CASE WHEN `xpoz_post_engagement` = 1 THEN 1 END) AS c3_pass,
         COUNT(CASE WHEN `xpoz_scraped` = 1 AND `xpoz_error` IS NOT NULL AND TRIM(`xpoz_error`) != '' THEN 1 END) AS errors,
+        COUNT(CASE WHEN `xpoz_scraped` = 1 AND `validate_verdict` = 'valid' THEN 1 END) AS verdict_valid,
         AVG(CASE WHEN `xpoz_scraped` = 1 AND `xpoz_engagement_rate` > 0 THEN `xpoz_engagement_rate` END) AS avg_eng
     FROM `" . DB_TABLE . "`
 ")->fetch();
@@ -337,12 +338,16 @@ elseif ($filter === 'c3')           $where .= " AND `xpoz_post_engagement` = 1";
 elseif (str_starts_with($filter, 'icp_')) {
     $icpVal = strtoupper(substr($filter, 4));
     $where .= " AND `xpoz_icp` = " . $pdo->quote($icpVal);
+} elseif ($filter === 'verdict_valid') {
+    $where .= " AND `validate_verdict` = 'valid'";
 }
 
-if ($verdict === '__null') {
-    $where .= " AND (`validate_verdict` IS NULL OR TRIM(`validate_verdict`) = '')";
-} elseif ($verdict !== '' && in_array($verdict, ['valid','suspicious','mismatch','insufficient_data'], true)) {
-    $where .= " AND `validate_verdict` = " . $pdo->quote($verdict);
+if ($filter !== 'verdict_valid') {
+    if ($verdict === '__null') {
+        $where .= " AND (`validate_verdict` IS NULL OR TRIM(`validate_verdict`) = '')";
+    } elseif ($verdict !== '' && in_array($verdict, ['valid','suspicious','mismatch','insufficient_data'], true)) {
+        $where .= " AND `validate_verdict` = " . $pdo->quote($verdict);
+    }
 }
 
 $params = [];
@@ -415,8 +420,11 @@ function sortIcon(string $col, string $currentSort, string $currentDir): string 
     if ($col !== $currentSort) return '';
     return $currentDir === 'DESC' ? ' ▼' : ' ▲';
 }
-function filterUrl(string $f): string {
+function filterUrl(string $f, bool $clearVerdict = false): string {
     $params = $_GET;
+    if ($clearVerdict) {
+        unset($params['verdict']);
+    }
     $params['filter'] = $f;
     $params['page'] = 1;
     return '?' . http_build_query($params);
@@ -766,6 +774,7 @@ tr:hover td{background:#252a3a}
         <a href="<?= filterUrl('c2') ?>" class="pill <?= $filter==='c2'?'active':'' ?>">C2 Стаб.</a>
         <a href="<?= filterUrl('c3') ?>" class="pill <?= $filter==='c3'?'active':'' ?>">C3 Вовл.</a>
         <a href="<?= filterUrl('errors') ?>" class="pill <?= $filter==='errors'?'active':'' ?>">Ошибки (<?= $nf($stats['errors']) ?>)</a>
+        <a href="<?= filterUrl('verdict_valid', true) ?>" class="pill <?= $filter==='verdict_valid'?'active':'' ?>">Verdict: Valid (<?= $nf($stats['verdict_valid']) ?>)</a>
         <?php foreach (['ICP1','ICP2','ICP3','ICP4','ICP5'] as $icp): ?>
             <a href="<?= filterUrl('icp_' . strtolower($icp)) ?>" class="pill <?= $filter==='icp_'.strtolower($icp)?'active':'' ?>"><?= $icp ?></a>
         <?php endforeach; ?>
