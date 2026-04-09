@@ -198,7 +198,7 @@ function exportCsv(): void
                `xpoz_icp`, `xpoz_offer_type`, `xpoz_funnel_type`, `xpoz_business_model`,
                `xpoz_audience_type`, `xpoz_monetization_strength`, `xpoz_monetization_reason`,
                `xpoz_platform_mix`, `xpoz_primary_domain`, `xpoz_language`, `xpoz_geo_hint`,
-               `xpoz_qualified`, `xpoz_error`, `xpoz_analyzed_at`
+               `xpoz_qualified`, `xpoz_error`, `xpoz_analyzed_at`, `validate_verdict`
         FROM `" . DB_TABLE . "` {$where}
         ORDER BY `xpoz_qualified` DESC, `xpoz_follower_count` DESC
     ")->fetchAll();
@@ -228,7 +228,8 @@ $sort     = $_GET['sort'] ?? 'xpoz_follower_count';
 $dir      = strtolower($_GET['dir'] ?? 'desc') === 'asc' ? 'ASC' : 'DESC';
 
 $allowedSorts = ['xpoz_follower_count','xpoz_engagement_rate','xpoz_icp','xpoz_offer_type',
-                 'xpoz_monetization_strength','xpoz_qualified','xpoz_analyzed_at','instructor'];
+                 'xpoz_monetization_strength','xpoz_qualified','xpoz_analyzed_at','instructor',
+                 'validate_verdict'];
 if (!in_array($sort, $allowedSorts)) $sort = 'xpoz_follower_count';
 
 // Stats
@@ -306,7 +307,7 @@ $dataStmt = $pdo->prepare("
            `xpoz_icp`, `xpoz_offer_type`, `xpoz_funnel_type`, `xpoz_business_model`,
            `xpoz_audience_type`, `xpoz_monetization_strength`, `xpoz_monetization_reason`,
            `xpoz_c4_reason`, `xpoz_platform_mix`, `xpoz_primary_domain`, `xpoz_language`, `xpoz_geo_hint`,
-           `xpoz_qualified`, `xpoz_error`, `xpoz_analyzed_at`
+           `xpoz_qualified`, `xpoz_error`, `xpoz_analyzed_at`, `validate_verdict`
     FROM `" . DB_TABLE . "` WHERE {$where}
     ORDER BY `{$sort}` {$dir}
     LIMIT {$perPage} OFFSET {$offset}
@@ -702,6 +703,7 @@ tr:hover td{background:#252a3a}
             <th>Domain</th>
             <th>Reason</th>
             <th>C4 Reason</th>
+            <th><a href="<?= sortUrl('validate_verdict',$sort,$dir) ?>">Verdict<?= sortIcon('validate_verdict',$sort,$dir) ?></a></th>
             <th><a href="<?= sortUrl('xpoz_qualified',$sort,$dir) ?>">Qual<?= sortIcon('xpoz_qualified',$sort,$dir) ?></a></th>
         </tr>
         </thead>
@@ -736,11 +738,20 @@ tr:hover td{background:#252a3a}
             <td style="font-size:0.72rem;color:#60a5fa"><?= $h($r['xpoz_primary_domain'] ?: '') ?></td>
             <td style="font-size:0.72rem;color:#94a3b8;max-width:220px;white-space:normal;line-height:1.4"><?= $h($r['xpoz_monetization_reason'] ?: '') ?></td>
             <td style="font-size:0.72rem;color:#c084fc;max-width:220px;white-space:normal;line-height:1.4"><?= $h($r['xpoz_c4_reason'] ?: '') ?></td>
+            <td><?php
+                $vv = $r['validate_verdict'] ?? '';
+                $vvTag = match($vv) {
+                    'valid' => 'tag-green', 'suspicious' => 'tag-yellow',
+                    'mismatch' => 'tag-red', 'insufficient_data' => 'tag-gray',
+                    default => '',
+                };
+                if ($vv): ?><span class="tag <?= $vvTag ?>"><?= $h($vv) ?></span><?php else: ?>—<?php endif;
+            ?></td>
             <td><?php if ($r['xpoz_qualified']): ?><span class="tag tag-green">YES</span><?php elseif ($r['xpoz_error']): ?><span class="tag tag-red" title="<?= $h($r['xpoz_error']) ?>">ERR</span><?php else: ?><span class="tag tag-gray">NO</span><?php endif; ?></td>
         </tr>
         <?php endforeach; ?>
         <?php if (!$rows): ?>
-        <tr><td colspan="17" style="text-align:center;color:#64748b;padding:24px">Нет данных</td></tr>
+        <tr><td colspan="18" style="text-align:center;color:#64748b;padding:24px">Нет данных</td></tr>
         <?php endif; ?>
         </tbody>
     </table>
