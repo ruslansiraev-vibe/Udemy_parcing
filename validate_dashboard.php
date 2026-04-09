@@ -222,10 +222,10 @@ $stats = $pdo->query("
         COUNT(CASE WHEN `validate_linkedin_match` = 'likely' THEN 1 END) AS li_likely,
         COUNT(CASE WHEN `validate_linkedin_match` = 'no' THEN 1 END) AS li_no,
         COUNT(CASE WHEN `validated_at` IS NOT NULL
-            AND `validate_email_match` IS NOT NULL AND `validate_email_match` != 'not_applicable'
-            AND `validate_website_match` IS NOT NULL AND `validate_website_match` != 'not_applicable'
-            AND `validate_instagram_match` IS NOT NULL AND `validate_instagram_match` != 'not_applicable'
-            AND `validate_linkedin_match` IS NOT NULL AND `validate_linkedin_match` != 'not_applicable'
+            AND `validate_email_match` = 'yes'
+            AND `validate_website_match` = 'yes'
+            AND `validate_instagram_match` = 'yes'
+            AND `validate_linkedin_match` = 'yes'
             THEN 1 END) AS all4_filled
     FROM `" . DB_TABLE . "`
 ")->fetch();
@@ -281,10 +281,10 @@ elseif ($filter === 'ig_no')      $where .= " AND `validate_instagram_match` = '
 elseif ($filter === 'email_ig') {
     $where .= " AND `instagram_parcing` IS NOT NULL AND TRIM(`instagram_parcing`) != '' AND {$usableEmailSql}";
 } elseif ($filter === 'all4') {
-    $where .= " AND `validate_email_match` IS NOT NULL AND `validate_email_match` != 'not_applicable'"
-        . " AND `validate_website_match` IS NOT NULL AND `validate_website_match` != 'not_applicable'"
-        . " AND `validate_instagram_match` IS NOT NULL AND `validate_instagram_match` != 'not_applicable'"
-        . " AND `validate_linkedin_match` IS NOT NULL AND `validate_linkedin_match` != 'not_applicable'";
+    $where .= " AND `validate_email_match` = 'yes'"
+        . " AND `validate_website_match` = 'yes'"
+        . " AND `validate_instagram_match` = 'yes'"
+        . " AND `validate_linkedin_match` = 'yes'";
 } elseif ($filter === 'pending') {
     $where = "`validated_at` IS NULL AND `instructor` IS NOT NULL AND TRIM(`instructor`) != ''";
 } elseif ($filter === 'pending_email_ig') {
