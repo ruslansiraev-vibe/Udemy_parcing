@@ -1387,6 +1387,8 @@ $singleUser   = '';
 $showStatsOnly = false;
 $reanalyze    = false;
 $requireEmail  = false;
+$matchEmail    = false;
+$matchIg       = false;
 $verdictFilter = '';
 $rangeFrom     = 0;
 $rangeTo       = 0;
@@ -1399,9 +1401,11 @@ foreach ($argv as $arg) {
     if (preg_match('/^--from=(\d+)$/',           $arg, $m)) $rangeFrom    = (int)$m[1];
     if (preg_match('/^--to=(\d+)$/',             $arg, $m)) $rangeTo      = (int)$m[1];
     if (preg_match('/^--verdict=(.+)$/',         $arg, $m)) $verdictFilter = trim($m[1]);
-    if ($arg === '--stats')        $showStatsOnly = true;
-    if ($arg === '--reanalyze')    $reanalyze      = true;
-    if ($arg === '--require-email') $requireEmail  = true;
+    if ($arg === '--stats')         $showStatsOnly = true;
+    if ($arg === '--reanalyze')     $reanalyze      = true;
+    if ($arg === '--require-email') $requireEmail   = true;
+    if ($arg === '--match-email')   $matchEmail     = true;
+    if ($arg === '--match-ig')      $matchIg        = true;
 }
 
 $workerLabel = $totalWorkers > 1 ? "[W{$workerIdx}/{$totalWorkers}] " : "";
@@ -1473,6 +1477,12 @@ if ($verdictFilter === '__null') {
     $eligibleCondition .= " AND (`validate_verdict` IS NULL OR TRIM(`validate_verdict`) = '')";
 } elseif ($verdictFilter !== '' && in_array($verdictFilter, ['valid','suspicious','mismatch','insufficient_data'], true)) {
     $eligibleCondition .= " AND `validate_verdict` = " . $pdo->quote($verdictFilter);
+}
+if ($matchEmail) {
+    $eligibleCondition .= " AND `validate_email_match` = 'yes'";
+}
+if ($matchIg) {
+    $eligibleCondition .= " AND `validate_instagram_match` = 'yes'";
 }
 $eligibleCondition .= " AND (`_rowid` % :tw) = :wi";
 

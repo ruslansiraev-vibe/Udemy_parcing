@@ -97,6 +97,12 @@ if (($_GET['action'] ?? '') === 'batch_count') {
     } elseif ($v !== '' && in_array($v, ['valid','suspicious','mismatch','insufficient_data'], true)) {
         $w .= " AND `validate_verdict` = " . $pdo->quote($v);
     }
+    if (!empty($_GET['match_email'])) {
+        $w .= " AND `validate_email_match` = 'yes'";
+    }
+    if (!empty($_GET['match_ig'])) {
+        $w .= " AND `validate_instagram_match` = 'yes'";
+    }
     $cnt = (int)$pdo->query("SELECT COUNT(*) FROM `" . DB_TABLE . "` WHERE {$w}")->fetchColumn();
     echo json_encode(['count' => $cnt]);
     exit;
@@ -155,6 +161,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $batchTo   = max(0, (int)($_POST['batch_to'] ?? 0));
         $reanalyze    = !empty($_POST['reanalyze']);
         $requireEmail = !empty($_POST['require_email']);
+        $matchEmail   = !empty($_POST['match_email']);
+        $matchIg      = !empty($_POST['match_ig']);
         $batchVerdict = trim($_POST['batch_verdict'] ?? '');
         $logFile      = xpoz_dashboard_log_file();
         $phpBin       = xpoz_dashboard_php_cli();
@@ -191,6 +199,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 if ($batchVerdict !== '') {
                     $args .= ' --verdict=' . escapeshellarg($batchVerdict);
                 }
+                if ($matchEmail) {
+                    $args .= ' --match-email';
+                }
+                if ($matchIg) {
+                    $args .= ' --match-ig';
+                }
                 $cmds[] = 'cd ' . escapeshellarg(__DIR__)
                     . ' && nohup ' . escapeshellarg($phpBin) . ' ' . escapeshellarg($script) . $args
                     . ' >> ' . escapeshellarg($logFile) . ' 2>&1 &';
@@ -199,9 +213,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 exec($c);
             }
             $rangeInfo   = ($batchFrom > 0 || $batchTo > 0) ? " (#{$batchFrom}–#{$batchTo})" : '';
-            $emailNote   = $requireEmail ? ' Только Instagram со строкой email.' : '';
+            $emailNote   = $requireEmail ? ' Только со строкой email.' : '';
             $verdictNote = $batchVerdict !== '' ? " Verdict={$batchVerdict}." : '';
-            $flash = "Запущено {$workers} воркеров{$rangeInfo}.{$emailNote}{$verdictNote} Лог: " . basename($logFile);
+            $matchNote   = ($matchEmail ? ' email_match=yes' : '') . ($matchIg ? ' ig_match=yes' : '');
+            $flash = "Запущено {$workers} воркеров{$rangeInfo}.{$emailNote}{$verdictNote}{$matchNote} Лог: " . basename($logFile);
         }
     }
 
@@ -663,6 +678,10 @@ tr:hover td{background:#252a3a}
                     <label title="Сайт, YouTube About, Twitter bio или Instagram bio (не NOT_FOUND/ошибки)"><input type="checkbox" name="require_email" id="batchEmail" value="1" checked style="margin-right:4px">Только со строкой email</label>
                 </div>
                 <div class="form-row">
+                    <label title="validate_email_match = yes"><input type="checkbox" name="match_email" id="batchMatchEmail" value="1" style="margin-right:4px">Email match = yes</label>
+                    <label title="validate_instagram_match = yes" style="margin-left:12px"><input type="checkbox" name="match_ig" id="batchMatchIg" value="1" style="margin-right:4px">Instagram match = yes</label>
+                </div>
+                <div class="form-row">
                     <label>Verdict</label>
                     <select name="batch_verdict" id="batchVerdict" style="background:#0f1117;border:1px solid #2d3148;border-radius:6px;padding:5px 10px;color:#e2e8f0;font-size:0.82rem;flex:1">
                         <option value="">Все</option>
@@ -858,10 +877,12 @@ const lb = document.getElementById('logbox');
 if (lb) lb.scrollTop = lb.scrollHeight;
 
 (function() {
-    const sel   = document.getElementById('batchVerdict');
-    const email = document.getElementById('batchEmail');
-    const reana = document.getElementById('batchReanalyze');
-    const out   = document.getElementById('batchCount');
+    const sel        = document.getElementById('batchVerdict');
+    const email      = document.getElementById('batchEmail');
+    const reana      = document.getElementById('batchReanalyze');
+    const matchEmail = document.getElementById('batchMatchEmail');
+    const matchIg    = document.getElementById('batchMatchIg');
+    const out        = document.getElementById('batchCount');
     if (!sel || !out) return;
 
     let timer = null;
@@ -871,8 +892,10 @@ if (lb) lb.scrollTop = lb.scrollHeight;
             const p = new URLSearchParams();
             p.set('action', 'batch_count');
             p.set('verdict', sel.value);
-            if (email && email.checked) p.set('require_email', '1');
-            if (reana && reana.checked) p.set('reanalyze', '1');
+            if (email      && email.checked)      p.set('require_email', '1');
+            if (reana      && reana.checked)       p.set('reanalyze', '1');
+            if (matchEmail && matchEmail.checked)  p.set('match_email', '1');
+            if (matchIg    && matchIg.checked)     p.set('match_ig', '1');
             out.textContent = '…';
             fetch('?' + p.toString())
                 .then(r => r.json())
@@ -882,8 +905,10 @@ if (lb) lb.scrollTop = lb.scrollHeight;
     }
 
     sel.addEventListener('change', refresh);
-    if (email) email.addEventListener('change', refresh);
-    if (reana) reana.addEventListener('change', refresh);
+    if (email)      email.addEventListener('change', refresh);
+    if (reana)      reana.addEventListener('change', refresh);
+    if (matchEmail) matchEmail.addEventListener('change', refresh);
+    if (matchIg)    matchIg.addEventListener('change', refresh);
     refresh();
 })();
 </script>
