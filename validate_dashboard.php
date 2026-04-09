@@ -265,32 +265,55 @@ $isRunning = false;
 $output = @shell_exec("ps aux | grep 'validate_leads.php' | grep -v grep 2>/dev/null");
 if ($output && trim($output) !== '') $isRunning = true;
 
+// ── Checkbox + verdict filters (from GET params) ────────────────────────────
+
+$cbEmail = !empty($_GET['cb_em']);
+$cbWeb   = !empty($_GET['cb_web']);
+$cbIg    = !empty($_GET['cb_ig']);
+$cbLi    = !empty($_GET['cb_li']);
+$verdictFilter = trim($_GET['verdict'] ?? '');
+$hasCheckboxFilters = $cbEmail || $cbWeb || $cbIg || $cbLi || $verdictFilter !== '';
+
 // ── Results table ────────────────────────────────────────────────────────────
 
 $where = "`validated_at` IS NOT NULL";
-if ($filter === 'valid')        $where .= " AND `validate_verdict` = 'valid'";
-elseif ($filter === 'suspicious') $where .= " AND `validate_verdict` = 'suspicious'";
-elseif ($filter === 'mismatch')   $where .= " AND `validate_verdict` = 'mismatch'";
-elseif ($filter === 'insufficient') $where .= " AND `validate_verdict` = 'insufficient_data'";
-elseif ($filter === 'email_yes')  $where .= " AND `validate_email_match` = 'yes'";
-elseif ($filter === 'email_no')   $where .= " AND `validate_email_match` = 'no'";
-elseif ($filter === 'web_yes')    $where .= " AND `validate_website_match` = 'yes'";
-elseif ($filter === 'web_no')     $where .= " AND `validate_website_match` = 'no'";
-elseif ($filter === 'ig_yes')     $where .= " AND `validate_instagram_match` = 'yes'";
-elseif ($filter === 'ig_no')      $where .= " AND `validate_instagram_match` = 'no'";
-elseif ($filter === 'email_ig') {
-    $where .= " AND `instagram_parcing` IS NOT NULL AND TRIM(`instagram_parcing`) != '' AND {$usableEmailSql}";
-} elseif ($filter === 'all4') {
-    $where .= " AND `validate_email_match` = 'yes'"
-        . " AND `validate_website_match` = 'yes'"
-        . " AND `validate_instagram_match` = 'yes'"
-        . " AND `validate_linkedin_match` = 'yes'";
-} elseif ($filter === 'pending') {
-    $where = "`validated_at` IS NULL AND `instructor` IS NOT NULL AND TRIM(`instructor`) != ''";
-} elseif ($filter === 'pending_email_ig') {
-    $where = "`validated_at` IS NULL AND `instructor` IS NOT NULL AND TRIM(`instructor`) != ''
-      AND `instagram_parcing` IS NOT NULL AND TRIM(`instagram_parcing`) != ''
-      AND {$usableEmailSql}";
+
+if ($hasCheckboxFilters) {
+    if ($cbEmail) $where .= " AND `validate_email_match` = 'yes'";
+    if ($cbWeb)   $where .= " AND `validate_website_match` = 'yes'";
+    if ($cbIg)    $where .= " AND `validate_instagram_match` = 'yes'";
+    if ($cbLi)    $where .= " AND `validate_linkedin_match` = 'yes'";
+    if ($verdictFilter !== '') {
+        $allowedVerdicts = ['valid','suspicious','mismatch','insufficient_data'];
+        if (in_array($verdictFilter, $allowedVerdicts, true)) {
+            $where .= " AND `validate_verdict` = " . $pdo->quote($verdictFilter);
+        }
+    }
+} else {
+    if ($filter === 'valid')        $where .= " AND `validate_verdict` = 'valid'";
+    elseif ($filter === 'suspicious') $where .= " AND `validate_verdict` = 'suspicious'";
+    elseif ($filter === 'mismatch')   $where .= " AND `validate_verdict` = 'mismatch'";
+    elseif ($filter === 'insufficient') $where .= " AND `validate_verdict` = 'insufficient_data'";
+    elseif ($filter === 'email_yes')  $where .= " AND `validate_email_match` = 'yes'";
+    elseif ($filter === 'email_no')   $where .= " AND `validate_email_match` = 'no'";
+    elseif ($filter === 'web_yes')    $where .= " AND `validate_website_match` = 'yes'";
+    elseif ($filter === 'web_no')     $where .= " AND `validate_website_match` = 'no'";
+    elseif ($filter === 'ig_yes')     $where .= " AND `validate_instagram_match` = 'yes'";
+    elseif ($filter === 'ig_no')      $where .= " AND `validate_instagram_match` = 'no'";
+    elseif ($filter === 'email_ig') {
+        $where .= " AND `instagram_parcing` IS NOT NULL AND TRIM(`instagram_parcing`) != '' AND {$usableEmailSql}";
+    } elseif ($filter === 'all4') {
+        $where .= " AND `validate_email_match` = 'yes'"
+            . " AND `validate_website_match` = 'yes'"
+            . " AND `validate_instagram_match` = 'yes'"
+            . " AND `validate_linkedin_match` = 'yes'";
+    } elseif ($filter === 'pending') {
+        $where = "`validated_at` IS NULL AND `instructor` IS NOT NULL AND TRIM(`instructor`) != ''";
+    } elseif ($filter === 'pending_email_ig') {
+        $where = "`validated_at` IS NULL AND `instructor` IS NOT NULL AND TRIM(`instructor`) != ''
+          AND `instagram_parcing` IS NOT NULL AND TRIM(`instagram_parcing`) != ''
+          AND {$usableEmailSql}";
+    }
 }
 
 $params = [];
@@ -460,6 +483,10 @@ tr:hover td{background:#252a3a}
 .breakdown-item .b-label{font-size:0.65rem;color:#64748b;margin-top:2px}
 .trunc{max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .reason-cell{font-size:0.7rem;color:#94a3b8;white-space:normal;line-height:1.4;min-width:250px}
+.cb-filter{display:inline-flex;align-items:center;gap:5px;font-size:0.78rem;color:#94a3b8;cursor:pointer;background:#252a3a;border-radius:6px;padding:5px 12px;border:1px solid transparent;transition:all .2s;user-select:none}
+.cb-filter:hover{border-color:#475569;color:#e2e8f0}
+.cb-filter.active{border-color:#3b82f6;background:#1e293b;color:#60a5fa}
+.cb-filter input{margin:0;accent-color:#3b82f6}
 .match-cell{text-align:center}
 </style>
 </head>
@@ -662,8 +689,29 @@ tr:hover td{background:#252a3a}
         </form>
     </div>
 
+    <form method="GET" id="cbForm" class="panel" style="margin-bottom:16px;padding:12px 16px;display:flex;flex-wrap:wrap;gap:12px;align-items:center">
+        <span style="font-size:0.78rem;color:#94a3b8;font-weight:600">Фильтр ✅:</span>
+        <label class="cb-filter <?= $cbEmail ? 'active' : '' ?>"><input type="checkbox" name="cb_em" value="1" <?= $cbEmail ? 'checked' : '' ?> onchange="this.form.submit()"> Email</label>
+        <label class="cb-filter <?= $cbWeb ? 'active' : '' ?>"><input type="checkbox" name="cb_web" value="1" <?= $cbWeb ? 'checked' : '' ?> onchange="this.form.submit()"> Сайт</label>
+        <label class="cb-filter <?= $cbIg ? 'active' : '' ?>"><input type="checkbox" name="cb_ig" value="1" <?= $cbIg ? 'checked' : '' ?> onchange="this.form.submit()"> Instagram</label>
+        <label class="cb-filter <?= $cbLi ? 'active' : '' ?>"><input type="checkbox" name="cb_li" value="1" <?= $cbLi ? 'checked' : '' ?> onchange="this.form.submit()"> LinkedIn</label>
+        <span style="color:#2d3148;margin:0 4px">|</span>
+        <span style="font-size:0.78rem;color:#94a3b8;font-weight:600">Verdict:</span>
+        <select name="verdict" onchange="this.form.submit()" style="background:#0f1117;border:1px solid #2d3148;border-radius:6px;padding:5px 10px;color:#e2e8f0;font-size:0.82rem">
+            <option value="">Все</option>
+            <option value="valid" <?= $verdictFilter==='valid'?'selected':'' ?>>Valid</option>
+            <option value="suspicious" <?= $verdictFilter==='suspicious'?'selected':'' ?>>Suspicious</option>
+            <option value="mismatch" <?= $verdictFilter==='mismatch'?'selected':'' ?>>Mismatch</option>
+            <option value="insufficient_data" <?= $verdictFilter==='insufficient_data'?'selected':'' ?>>Insufficient</option>
+        </select>
+        <?php if ($search !== ''): ?><input type="hidden" name="search" value="<?= $h($search) ?>"><?php endif; ?>
+        <?php if ($hasCheckboxFilters): ?>
+            <a href="?filter=all" class="btn" style="font-size:0.72rem;padding:4px 10px;text-decoration:none">Сбросить</a>
+        <?php endif; ?>
+    </form>
+
     <div class="filter-pills">
-        <a href="<?= filterUrl('all') ?>" class="pill <?= $filter==='all'?'active':'' ?>">Все (<?= $nf($stats['validated']) ?>)</a>
+        <a href="<?= filterUrl('all') ?>" class="pill <?= $filter==='all' && !$hasCheckboxFilters ?'active':'' ?>">Все (<?= $nf($stats['validated']) ?>)</a>
         <a href="<?= filterUrl('valid') ?>" class="pill <?= $filter==='valid'?'active':'' ?>">Valid (<?= $nf($stats['valid']) ?>)</a>
         <a href="<?= filterUrl('suspicious') ?>" class="pill <?= $filter==='suspicious'?'active':'' ?>">Suspicious (<?= $nf($stats['suspicious']) ?>)</a>
         <a href="<?= filterUrl('mismatch') ?>" class="pill <?= $filter==='mismatch'?'active':'' ?>">Mismatch (<?= $nf($stats['mismatch']) ?>)</a>
