@@ -707,6 +707,7 @@ tr:hover td{background:#252a3a}
         <?php if ($search !== ''): ?><input type="hidden" name="search" value="<?= $h($search) ?>"><?php endif; ?>
         <?php if ($hasCheckboxFilters): ?>
             <a href="?filter=all" class="btn" style="font-size:0.72rem;padding:4px 10px;text-decoration:none">Сбросить</a>
+            <span style="font-size:0.85rem;font-weight:700;color:#60a5fa;margin-left:4px">Итого: <?= $nf($totalRows) ?></span>
         <?php endif; ?>
     </form>
 
