@@ -220,7 +220,13 @@ $stats = $pdo->query("
         COUNT(CASE WHEN `validate_instagram_match` = 'no' THEN 1 END) AS ig_no,
         COUNT(CASE WHEN `validate_linkedin_match` = 'yes' THEN 1 END) AS li_yes,
         COUNT(CASE WHEN `validate_linkedin_match` = 'likely' THEN 1 END) AS li_likely,
-        COUNT(CASE WHEN `validate_linkedin_match` = 'no' THEN 1 END) AS li_no
+        COUNT(CASE WHEN `validate_linkedin_match` = 'no' THEN 1 END) AS li_no,
+        COUNT(CASE WHEN `validated_at` IS NOT NULL
+            AND `validate_email_match` IS NOT NULL AND `validate_email_match` != 'not_applicable'
+            AND `validate_website_match` IS NOT NULL AND `validate_website_match` != 'not_applicable'
+            AND `validate_instagram_match` IS NOT NULL AND `validate_instagram_match` != 'not_applicable'
+            AND `validate_linkedin_match` IS NOT NULL AND `validate_linkedin_match` != 'not_applicable'
+            THEN 1 END) AS all4_filled
     FROM `" . DB_TABLE . "`
 ")->fetch();
 
@@ -274,6 +280,11 @@ elseif ($filter === 'ig_yes')     $where .= " AND `validate_instagram_match` = '
 elseif ($filter === 'ig_no')      $where .= " AND `validate_instagram_match` = 'no'";
 elseif ($filter === 'email_ig') {
     $where .= " AND `instagram_parcing` IS NOT NULL AND TRIM(`instagram_parcing`) != '' AND {$usableEmailSql}";
+} elseif ($filter === 'all4') {
+    $where .= " AND `validate_email_match` IS NOT NULL AND `validate_email_match` != 'not_applicable'"
+        . " AND `validate_website_match` IS NOT NULL AND `validate_website_match` != 'not_applicable'"
+        . " AND `validate_instagram_match` IS NOT NULL AND `validate_instagram_match` != 'not_applicable'"
+        . " AND `validate_linkedin_match` IS NOT NULL AND `validate_linkedin_match` != 'not_applicable'";
 } elseif ($filter === 'pending') {
     $where = "`validated_at` IS NULL AND `instructor` IS NOT NULL AND TRIM(`instructor`) != ''";
 } elseif ($filter === 'pending_email_ig') {
@@ -661,6 +672,7 @@ tr:hover td{background:#252a3a}
         <a href="<?= filterUrl('pending_email_ig') ?>" class="pill <?= $filter==='pending_email_ig'?'active':'' ?>">Не проверены Email+IG (<?= $nf($countPendingEmailIg) ?>)</a>
         <span style="color:#2d3148">|</span>
         <a href="<?= filterUrl('email_ig') ?>" class="pill <?= $filter==='email_ig'?'active':'' ?>">Email+IG (<?= $nf($countEmailIg) ?>)</a>
+        <a href="<?= filterUrl('all4') ?>" class="pill <?= $filter==='all4'?'active':'' ?>">Все 4 заполнены (<?= $nf($stats['all4_filled']) ?>)</a>
         <span style="color:#2d3148">|</span>
         <a href="<?= filterUrl('email_yes') ?>" class="pill <?= $filter==='email_yes'?'active':'' ?>">Email ✅</a>
         <a href="<?= filterUrl('email_no') ?>" class="pill <?= $filter==='email_no'?'active':'' ?>">Email ❌</a>
