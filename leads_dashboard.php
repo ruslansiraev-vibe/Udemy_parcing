@@ -6,7 +6,7 @@ define('DB_NAME', 'udemy_leads');
 define('DB_TABLE', 'leads_copy');
 define('DB_USER', 'root');
 define('DB_PASS', '');
-define('PER_PAGE', 50);
+define('PER_PAGE', 100);
 
 $pdo = new PDO(
     "mysql:host=" . DB_HOST . ";port=" . DB_PORT . ";dbname=" . DB_NAME . ";charset=utf8mb4",
@@ -130,7 +130,7 @@ $colColors = [
             min-height: 100vh;
         }
 
-        .container { max-width: 1600px; margin: 0 auto; padding: 24px; }
+        .container { margin: 0 auto; padding: 24px; }
 
         h1 { font-size: 1.5rem; font-weight: 700; color: #fff; }
         .subtitle { color: #64748b; font-size: 0.82rem; margin-top: 2px; }
@@ -209,7 +209,7 @@ $colColors = [
 
         .table-scroll { overflow-x: auto; }
 
-        table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+        table { border-collapse: collapse; font-size: 0.8rem; width: max-content; min-width: 100%; }
 
         thead th {
             position: sticky; top: 0; z-index: 2;
@@ -221,14 +221,13 @@ $colColors = [
 
         tbody td {
             padding: 8px 12px; border-bottom: 1px solid #1a1f2e;
-            vertical-align: top; max-width: 220px;
-            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            vertical-align: top; white-space: nowrap;
         }
 
         tbody tr:hover td { background: #252a3a; }
         tbody tr:last-child td { border-bottom: none; }
 
-        .cell-instructor { color: #e2e8f0; font-weight: 500; max-width: 180px; }
+        .cell-instructor { color: #e2e8f0; font-weight: 500; }
         .cell-link { color: #60a5fa; text-decoration: none; }
         .cell-link:hover { text-decoration: underline; }
         .cell-email { color: #4ade80; font-family: monospace; font-size: 0.78rem; }
@@ -335,18 +334,17 @@ $colColors = [
             <?php foreach (array_keys($columns) as $col):
                 $val = $row[$col] ?? '';
                 if ($col === 'instructor'): ?>
-                    <td class="cell-instructor" title="<?= htmlspecialchars($val) ?>"><?= htmlspecialchars(mb_strimwidth($val, 0, 32, '...')) ?></td>
+                    <td class="cell-instructor"><?= htmlspecialchars($val) ?></td>
                 <?php elseif ($col === 'email_parcing'): ?>
-                    <td class="cell-email" title="<?= htmlspecialchars($val) ?>"><?= $val !== '' ? htmlspecialchars(mb_strimwidth($val, 0, 36, '...')) : '<span class="cell-empty">&mdash;</span>' ?></td>
+                    <td class="cell-email"><?= $val !== '' ? htmlspecialchars($val) : '<span class="cell-empty">&mdash;</span>' ?></td>
                 <?php elseif ($val !== ''):
                     $isUrl = str_starts_with($val, 'http');
-                    $display = mb_strimwidth($val, 0, 36, '...');
                 ?>
-                    <td title="<?= htmlspecialchars($val) ?>">
+                    <td>
                         <?php if ($isUrl): ?>
-                            <a href="<?= htmlspecialchars(explode(',', $val)[0]) ?>" target="_blank" class="cell-link"><?= htmlspecialchars($display) ?></a>
+                            <a href="<?= htmlspecialchars(explode(',', $val)[0]) ?>" target="_blank" class="cell-link"><?= htmlspecialchars($val) ?></a>
                         <?php else: ?>
-                            <?= htmlspecialchars($display) ?>
+                            <?= htmlspecialchars($val) ?>
                         <?php endif; ?>
                     </td>
                 <?php else: ?>

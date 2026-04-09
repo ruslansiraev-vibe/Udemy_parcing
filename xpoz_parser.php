@@ -59,6 +59,7 @@ define('MODEL_HAIKU',    'claude-haiku-4-5-20251001');
 define('POSTS_LIMIT',      20);
 define('DAYS_90',           90);
 define('DELAY_MS',          500);
+define('XPOZ_DELAY_SEC',   2);
 define('FETCH_BATCH_SIZE',  100);
 define('REQUEST_TIMEOUT',   90);
 
@@ -109,6 +110,23 @@ Your task: determine whether an Instagram account belongs to an EXPERT who monet
 
 We are looking for: a blogger / content creator who has built an audience around a specific niche and sells their OWN expertise.
 
+You will receive a structured dossier with:
+- Instagram profile metrics (followers, following, posts count, verified status)
+- Full name (often contains niche keywords like "Coach", "Founder", etc.)
+- Bio text and external URL
+- Known platforms from our database (website domain, LinkedIn, YouTube, Udemy courses, email type)
+- Recent posts with engagement metrics (likes, comments, shares, views) and content type (Reel/Carousel/Photo)
+- Post dates to assess activity recency
+
+USE ALL of this data for your analysis. Key heuristics:
+- Business-domain email (not gmail/yahoo) = likely serious business
+- Udemy instructor = already sells courses (strong positive signal)
+- Own website + LinkedIn + YouTube = multi-channel expert
+- High engagement on educational content = authority in niche
+- Reels with 10K+ views on a 5K-follower account = viral educational content
+- Follower/following ratio > 10:1 = established authority
+- Carousel posts with high saves = educational content creator
+
 POSITIVE signals (expert monetization):
 - Own online courses, programs, bootcamps, masterclasses, academies
 - Own coaching, mentoring, consulting, 1:1 sessions, mastermind groups
@@ -119,6 +137,7 @@ POSITIVE signals (expert monetization):
 - Own SaaS / software tools built on their expertise
 - Lead magnets funneling into paid expert offerings (free guide → course, free webinar → coaching)
 - Clear niche authority: the person teaches, advises, or consults in a specific domain
+- Being a Udemy instructor (already sells educational content)
 
 NEGATIVE signals (NOT what we are looking for):
 - Brand deals, sponsored posts, paid partnerships (#ad, #sponsored, "thanks to @brand")
@@ -131,14 +150,14 @@ NEGATIVE signals (NOT what we are looking for):
 
 Key distinction: the person must be THE expert, not a promoter of someone else's expertise.
 
-Analyze the provided bio and recent post captions carefully. Return strict JSON only:
+Analyze ALL provided data carefully. Return strict JSON only:
 {
   "is_expert": true,
   "has_own_product": true,
   "expertise_niche": "specific niche in 2-5 words",
-  "signals_found": ["exact phrases from bio/captions proving expert monetization"],
+  "signals_found": ["exact phrases from bio/captions AND contextual signals like 'Udemy instructor', 'business email domain', 'own website'"],
   "red_flags": ["any brand deal / affiliate / non-expert signals found"],
-  "reasoning": "2-3 sentences explaining why this is or isn't an expert monetizing own knowledge",
+  "reasoning": "2-3 sentences explaining why this is or isn't an expert monetizing own knowledge. Reference specific metrics and cross-platform presence.",
   "offer_type": "course|coaching|consulting|agency_service|community_membership|webinar_workshop|newsletter|digital_product|software_tool|unknown",
   "funnel_type": "book_call|dm_to_buy|link_in_bio|lead_magnet|webinar_funnel|waitlist|subscribe_join|direct_checkout|unknown",
   "business_model": "education|service_business|community_business|audience_monetization|software_tool|unknown",
@@ -148,12 +167,12 @@ Analyze the provided bio and recent post captions carefully. Return strict JSON 
   "bio_keywords": ["niche/expertise keywords"],
   "confidence": 0.0,
   "icp": "ICP1|ICP2|ICP3|ICP4|ICP5|unknown",
-  "c4_reason": "Explain in 2-4 sentences WHY this account qualifies or does not qualify for C4 criterion: does the person monetize their OWN expertise (not brand deals / affiliate)? Mention specific evidence from bio or captions."
+  "c4_reason": "Explain in 2-4 sentences WHY this account qualifies or does not qualify for C4 criterion: does the person monetize their OWN expertise (not brand deals / affiliate)? Mention specific evidence from bio, captions, engagement metrics, and cross-platform presence."
 }
 
 Confidence guide:
-- 0.8-1.0: clear expert with own paid products/services
-- 0.6-0.8: likely expert, some signals but not fully explicit
+- 0.8-1.0: clear expert with own paid products/services, confirmed by multiple signals (bio + captions + website + engagement)
+- 0.6-0.8: likely expert, some signals but not fully explicit; OR strong single signal (e.g. Udemy instructor with relevant bio)
 - 0.4-0.6: ambiguous — could be expert or could be affiliate/brand promoter
 - 0.2-0.4: mostly brand deals / affiliate, minimal own expertise signals
 - 0.0-0.2: no expert monetization at all
@@ -489,8 +508,17 @@ function normalizeTaxonomyResult(
         $c4Reason = trim((string)($merged['reasoning'] ?? $fallback['reasoning'] ?? ''));
     }
 
+    $fromClaude = ($rawResult['_source'] ?? '') === 'claude';
+    if ($fromClaude && array_key_exists('has_signals', $rawResult)) {
+        $hasSignals = (bool)$rawResult['has_signals'];
+    } elseif ($fromClaude && array_key_exists('is_expert', $rawResult)) {
+        $hasSignals = !empty($rawResult['is_expert']) && !empty($rawResult['has_own_product']);
+    } else {
+        $hasSignals = (bool)$signals;
+    }
+
     return [
-        'has_signals'           => (bool)($merged['has_signals'] ?? (bool)$signals),
+        'has_signals'           => $hasSignals,
         'signals_found'         => $signals,
         'reasoning'             => trim((string)($merged['reasoning'] ?? $fallback['reasoning'])),
         'offer_type'            => $offerType,
@@ -541,6 +569,7 @@ function xpozCall(string $tool, array $args, int $maxPoll = 10): array
         }
 
         $data = parseSse($body);
+        sleep(XPOZ_DELAY_SEC);
 
         $opId = $data['operationId'] ?? null;
         if ($opId && ($data['status'] ?? '') === 'running') {
@@ -554,6 +583,7 @@ function xpozCall(string $tool, array $args, int $maxPoll = 10): array
                 $pollBody = curlPost(XPOZ_URL, $pollPayload, $headers);
                 if ($pollBody === false) continue;
                 $data = parseSse($pollBody);
+                sleep(XPOZ_DELAY_SEC);
                 if (!empty($data['success']) || str_contains(json_encode($data), 'results')) break;
                 if (($data['status'] ?? 'running') !== 'running') break;
             }
@@ -840,16 +870,131 @@ function criterion3Engagement(array $posts, int $followerCount): array
     return [$rate >= 0.015, round($rate * 100, 2), $total];
 }
 
-function criterion4Monetization(array $posts, string $biography, string $externalUrl): array
-{
-    $captions = [];
-    foreach ($posts as $p) {
-        $cap = (string)($p['caption'] ?? '');
-        if ($cap !== '') $captions[] = mb_substr($cap, 0, 200);
+function buildRichContentText(
+    array $profile,
+    array $posts,
+    array $dbRow,
+): string {
+    $username      = $profile['username'] ?? '';
+    $fullName      = $profile['fullName'] ?? '';
+    $biography     = $profile['biography'] ?? '';
+    $externalUrl   = $profile['externalUrl'] ?? '';
+    $followers     = safeInt($profile['followerCount'] ?? null);
+    $following     = safeInt($profile['followingCount'] ?? null);
+    $mediaCount    = safeInt($profile['mediaCount'] ?? null);
+    $isVerified    = !empty($profile['isVerified']);
+    $ratio         = $following > 0 ? round($followers / $following, 1) : 0;
+
+    $lines = [];
+    $lines[] = "## Instagram Profile";
+    $lines[] = "Username: @{$username}";
+    if ($fullName) $lines[] = "Full Name: {$fullName}";
+    $lines[] = "Followers: " . number_format($followers) . " | Following: " . number_format($following) . " | Posts: " . number_format($mediaCount);
+    $lines[] = "Follower/Following ratio: {$ratio}:1";
+    $lines[] = "Verified: " . ($isVerified ? 'Yes' : 'No');
+    $lines[] = "Bio: {$biography}";
+    if ($externalUrl) $lines[] = "External URL: {$externalUrl}";
+
+    $lines[] = "";
+    $lines[] = "## Known Platforms (from our database)";
+
+    $instructor = trim($dbRow['instructor'] ?? '');
+    if ($instructor) $lines[] = "Instructor name: {$instructor}";
+
+    $hasUdemy = !empty($dbRow['UdemyProfile1_parcing']);
+    $lines[] = "Udemy instructor: " . ($hasUdemy ? "YES (has courses on Udemy)" : "No");
+
+    $website = trim($dbRow['website_parcing'] ?? '');
+    if ($website) {
+        $parsed = parse_url(str_contains($website, '://') ? $website : "https://{$website}");
+        $domain = strtolower($parsed['host'] ?? $website);
+        if (str_starts_with($domain, 'www.')) $domain = substr($domain, 4);
+        $lines[] = "Website: {$domain}";
+    } else {
+        $lines[] = "Website: none";
     }
-    $captionsText = implode("\n---\n", array_slice($captions, 0, 20));
-    $contentText = "Bio: {$biography}\nExternal URL: {$externalUrl}\n\nCaptions:\n{$captionsText}";
+
+    $linkedin = trim($dbRow['linkedin_parcing'] ?? '');
+    $lines[] = "LinkedIn: " . ($linkedin ? "yes" : "no");
+
+    $youtube = trim($dbRow['youtube_parcing'] ?? '');
+    $lines[] = "YouTube: " . ($youtube ? "yes" : "no");
+
+    $facebook = trim($dbRow['facebook_parcing'] ?? '');
+    $lines[] = "Facebook: " . ($facebook ? "yes" : "no");
+
+    $twitter = trim($dbRow['twitter_parcing'] ?? '');
+    $lines[] = "Twitter/X: " . ($twitter ? "yes" : "no");
+
+    $tiktok = trim($dbRow['tiktok_parcing'] ?? '');
+    $lines[] = "TikTok: " . ($tiktok ? "yes" : "no");
+
+    $email = trim($dbRow['email_parcing'] ?? '');
+    if ($email) {
+        $firstEmail = trim(explode(';', $email)[0]);
+        $emailDomain = substr($firstEmail, strpos($firstEmail, '@') + 1);
+        $freeProviders = ['gmail.com','yahoo.com','hotmail.com','outlook.com','mail.com','icloud.com','aol.com','protonmail.com','yandex.ru','mail.ru'];
+        $isBusiness = !in_array(strtolower($emailDomain), $freeProviders);
+        $lines[] = "Email: " . ($isBusiness ? "business domain ({$emailDomain})" : "free provider ({$emailDomain})");
+    } else {
+        $lines[] = "Email: none found";
+    }
+
+    $platformCount = (int)!empty($website) + (int)!empty($linkedin) + (int)!empty($youtube) + (int)!empty($facebook) + (int)!empty($twitter) + (int)!empty($tiktok);
+    $lines[] = "Total platforms: {$platformCount}";
+
+    $lines[] = "";
+    $lines[] = "## Recent Posts (last " . count($posts) . ")";
+
+    $postTypes = ['reel' => 0, 'carousel' => 0, 'photo' => 0, 'video' => 0];
+    foreach ($posts as $i => $p) {
+        $cap       = trim((string)($p['caption'] ?? ''));
+        $likes     = safeInt($p['likeCount'] ?? null);
+        $comments  = safeInt($p['commentCount'] ?? null);
+        $reshares  = safeInt($p['reshareCount'] ?? null);
+        $views     = safeInt($p['videoPlayCount'] ?? null);
+        $date      = $p['createdAtDate'] ?? '';
+        $mediaType = strtolower((string)($p['mediaType'] ?? ''));
+        $postType  = strtolower((string)($p['postType'] ?? ''));
+
+        $typeLabel = 'Photo';
+        if ($mediaType === 'video' || str_contains($postType, 'reel')) {
+            $typeLabel = 'Reel';
+            $postTypes['reel']++;
+        } elseif (str_contains($postType, 'carousel') || str_contains($mediaType, 'carousel') || str_contains($mediaType, 'album')) {
+            $typeLabel = 'Carousel';
+            $postTypes['carousel']++;
+        } else {
+            $postTypes['photo']++;
+        }
+
+        $num = $i + 1;
+        $metrics = [];
+        if ($views > 0) $metrics[] = number_format($views) . " views";
+        $metrics[] = number_format($likes) . " likes";
+        $metrics[] = number_format($comments) . " comments";
+        if ($reshares > 0) $metrics[] = number_format($reshares) . " shares";
+        $metricsStr = implode(' | ', $metrics);
+
+        $dateStr = $date ? " ({$date})" : '';
+        $capText = $cap !== '' ? mb_substr($cap, 0, 500) : '(no caption)';
+
+        $lines[] = "{$num}. [{$typeLabel}]{$dateStr} {$metricsStr}";
+        $lines[] = "   {$capText}";
+        $lines[] = "";
+    }
+
+    $lines[] = "## Content Mix";
+    $lines[] = "Reels: {$postTypes['reel']} | Carousels: {$postTypes['carousel']} | Photos: {$postTypes['photo']}";
+
+    return implode("\n", $lines);
+}
+
+function criterion4Monetization(array $posts, string $biography, string $externalUrl, array $profile = [], array $dbRow = []): array
+{
+    $contentText = buildRichContentText($profile, $posts, $dbRow);
     $fallback = heuristicTaxonomy($contentText);
+    $fallback['_source'] = 'heuristic';
 
     if (ANTHROPIC_KEY === '') {
         $fallback['error'] = 'ANTHROPIC_API_KEY empty, heuristic fallback used';
@@ -860,11 +1005,34 @@ function criterion4Monetization(array $posts, string $biography, string $externa
     if ($apiResult === null) {
         return [$fallback['has_signals'], $fallback];
     }
-    return [$apiResult['has_signals'] ?? $fallback['has_signals'], $apiResult];
+
+    $apiResult['_source'] = 'claude';
+    $isExpert = !empty($apiResult['is_expert']) && !empty($apiResult['has_own_product']);
+    $hasSignals = $apiResult['has_signals'] ?? $isExpert;
+    return [$hasSignals, $apiResult];
 }
+
+const MONETIZATION_TASK_PROMPT = <<<'TASK'
+Analyze the Instagram account dossier below. Your task:
+
+1. Determine if this person is an EXPERT who monetizes their OWN expertise (courses, coaching, consulting, digital products, communities) — NOT through brand deals or affiliate marketing.
+2. Cross-reference ALL available data: bio text, post captions, engagement metrics, content types, known platforms (Udemy, website, LinkedIn, etc.), and email type.
+3. Pay special attention to:
+   - Whether they are a Udemy instructor (strong signal they sell courses)
+   - Whether they have a business-domain email (not gmail/yahoo)
+   - Whether their captions contain CTAs for their own products/services
+   - Whether engagement patterns suggest educational/authority content
+   - Follower/following ratio (high ratio = established authority)
+4. Return your analysis as strict JSON matching the schema from your instructions.
+
+Here is the account dossier:
+
+TASK;
 
 function callClaudeHaiku(string $contentText): ?array
 {
+    $userMessage = MONETIZATION_TASK_PROMPT . "\n" . $contentText;
+
     $payload = json_encode([
         'model'      => MODEL_HAIKU,
         'max_tokens' => 1024,
@@ -875,7 +1043,7 @@ function callClaudeHaiku(string $contentText): ?array
         ]],
         'messages' => [[
             'role'    => 'user',
-            'content' => $contentText,
+            'content' => $userMessage,
         ]],
     ], JSON_UNESCAPED_UNICODE);
 
@@ -949,7 +1117,7 @@ function criterion5OtherSocials(string $username, string $biography, string $ext
 
 // ── Main analysis ────────────────────────────────────────────────────────────
 
-function analyzeAccount(string $username, bool $verbose = false): array
+function analyzeAccount(string $username, bool $verbose = false, array $dbRow = []): array
 {
     $result = [
         'follower_count'        => 0,
@@ -1034,7 +1202,7 @@ function analyzeAccount(string $username, bool $verbose = false): array
 
     // Criterion 4
     if ($verbose) echo "  [3/3] Анализ монетизации... ";
-    [$c4, $c4details] = criterion4Monetization($posts, $biography, $externalUrl);
+    [$c4, $c4details] = criterion4Monetization($posts, $biography, $externalUrl, $profile, $dbRow);
     if ($verbose) echo "✓\n";
 
     // Criterion 5
@@ -1050,7 +1218,8 @@ function analyzeAccount(string $username, bool $verbose = false): array
 
     $taxonomy = normalizeTaxonomyResult($c4details, $biography, $externalUrl, $otherSocials, $captionsText);
 
-    $result['monetization']          = $c4 || $taxonomy['has_signals'];
+    $claudeDecided = ($c4details['_source'] ?? '') === 'claude';
+    $result['monetization'] = $claudeDecided ? $c4 : ($c4 || $taxonomy['has_signals']);
     $result['monetization_signals']  = $taxonomy['signals_found'];
     $result['monetization_reason']   = $taxonomy['reasoning'];
     $result['offer_type']            = $taxonomy['offer_type'];
@@ -1251,11 +1420,14 @@ if ($singleUser !== '') {
         echo "  ❌ Невалидный username: {$singleUser}\n";
         exit(1);
     }
-    $result = analyzeAccount($username, true);
 
     $h = strtolower($username);
-    $row = $pdo->prepare("
-        SELECT `_rowid` FROM `" . DB_TABLE . "`
+    $dbRowStmt = $pdo->prepare("
+        SELECT `_rowid`, `instructor`, `instagram_parcing`,
+               `UdemyProfile1_parcing`, `website_parcing`, `linkedin_parcing`,
+               `youtube_parcing`, `facebook_parcing`, `twitter_parcing`,
+               `tiktok_parcing`, `email_parcing`
+        FROM `" . DB_TABLE . "`
         WHERE `instagram_parcing` IS NOT NULL AND TRIM(`instagram_parcing`) != ''
           AND (
             LOCATE(?, LOWER(`instagram_parcing`)) > 0
@@ -1265,12 +1437,15 @@ if ($singleUser !== '') {
         ORDER BY `_rowid` ASC
         LIMIT 1
     ");
-    $row->execute([
+    $dbRowStmt->execute([
         'instagram.com/' . $h,
         'instagram.com/@' . $h,
         '@' . $h,
     ]);
-    $found = $row->fetch();
+    $found = $dbRowStmt->fetch();
+
+    $result = analyzeAccount($username, true, $found ?: []);
+
     if ($found) {
         saveResult((int)$found['_rowid'], $result);
         echo "  ✓ Сохранено в " . DB_TABLE . " (rowid={$found['_rowid']})\n";
@@ -1338,7 +1513,10 @@ if ($total === 0) {
 }
 
 $fetchBatchStmt = $pdo->prepare("
-    SELECT `_rowid`, `instructor`, `instagram_parcing`
+    SELECT `_rowid`, `instructor`, `instagram_parcing`,
+           `UdemyProfile1_parcing`, `website_parcing`, `linkedin_parcing`,
+           `youtube_parcing`, `facebook_parcing`, `twitter_parcing`,
+           `tiktok_parcing`, `email_parcing`
     FROM `" . DB_TABLE . "`
     WHERE {$eligibleCondition}
       AND `_rowid` > :lastRowId
@@ -1384,7 +1562,7 @@ while ($processed < $total) {
         $eta = gmdate('H:i:s', (int)$remaining);
         $pct = $total > 0 ? round($processed / $total * 100, 1) : 0;
 
-        $result = analyzeAccount($username);
+        $result = analyzeAccount($username, false, $row);
         saveResult($rowid, $result);
 
         $isOk = $result['error'] === '';

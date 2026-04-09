@@ -620,6 +620,14 @@ tr:hover td{background:#252a3a}
                     <button type="submit" class="btn btn-green">Запустить batch</button>
                 </div>
             </form>
+            <div style="margin-top:10px;padding:10px 12px;background:#0f1117;border:1px solid #2d3148;border-radius:6px;font-size:0.72rem;color:#64748b;line-height:1.6">
+                <b style="color:#94a3b8">Подсказка:</b>
+                <b>Лимит</b> — макс. аккаунтов <u>на каждый воркер</u> (0 = без лимита).<br>
+                Пример: Воркеры=1, Лимит=100 → обработает 100 аккаунтов.<br>
+                Пример: Воркеры=5, Лимит=20 → обработает до 100 (5×20).<br>
+                <b>С / По</b> — порядковый номер в очереди (1-based, 0 = без ограничения).<br>
+                <b>Перезапуск</b> — повторно анализировать уже обработанные аккаунты.
+            </div>
         <?php endif; ?>
 
         <div class="section-title" style="margin-top:20px">Экспорт CSV</div>
