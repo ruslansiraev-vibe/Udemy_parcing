@@ -224,6 +224,7 @@ $page     = max(1, (int)($_GET['page'] ?? 1));
 $perPage  = 50;
 $search   = trim($_GET['search'] ?? '');
 $filter   = $_GET['filter'] ?? 'all';
+$verdict  = $_GET['verdict'] ?? '';
 $sort     = $_GET['sort'] ?? 'xpoz_follower_count';
 $dir      = strtolower($_GET['dir'] ?? 'desc') === 'asc' ? 'ASC' : 'DESC';
 
@@ -282,6 +283,11 @@ elseif ($filter === 'c3')           $where .= " AND `xpoz_post_engagement` = 1";
 elseif (str_starts_with($filter, 'icp_')) {
     $icpVal = strtoupper(substr($filter, 4));
     $where .= " AND `xpoz_icp` = " . $pdo->quote($icpVal);
+}
+
+$allowedVerdicts = ['valid','suspicious','mismatch','insufficient_data'];
+if ($verdict !== '' && in_array($verdict, $allowedVerdicts, true)) {
+    $where .= " AND `validate_verdict` = " . $pdo->quote($verdict);
 }
 
 $params = [];
@@ -661,13 +667,20 @@ tr:hover td{background:#252a3a}
     <div class="section-title">Результаты анализа (<?= $nf($totalRows) ?>)</div>
 
     <div class="toolbar">
-        <form method="GET" style="display:flex;gap:6px;align-items:center">
-            <?php foreach ($_GET as $k => $v): if ($k === 'search' || $k === 'page') continue; ?>
+        <form method="GET" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <?php foreach ($_GET as $k => $v): if (in_array($k, ['search','page','verdict'])) continue; ?>
             <input type="hidden" name="<?= $h($k) ?>" value="<?= $h($v) ?>">
             <?php endforeach; ?>
             <input type="text" name="search" value="<?= $h($search) ?>" placeholder="Поиск...">
+            <select name="verdict" onchange="this.form.submit()" style="padding:6px 10px;border-radius:6px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;font-size:0.82rem">
+                <option value="">Verdict: все</option>
+                <option value="valid" <?= $verdict==='valid'?'selected':'' ?>>valid</option>
+                <option value="suspicious" <?= $verdict==='suspicious'?'selected':'' ?>>suspicious</option>
+                <option value="mismatch" <?= $verdict==='mismatch'?'selected':'' ?>>mismatch</option>
+                <option value="insufficient_data" <?= $verdict==='insufficient_data'?'selected':'' ?>>insufficient_data</option>
+            </select>
             <button type="submit" class="btn">Найти</button>
-            <?php if ($search): ?>
+            <?php if ($search || $verdict): ?>
                 <a href="<?= filterUrl($filter) ?>" class="btn">Сбросить</a>
             <?php endif; ?>
         </form>
