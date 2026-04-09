@@ -1386,9 +1386,10 @@ $limit        = 0;
 $singleUser   = '';
 $showStatsOnly = false;
 $reanalyze    = false;
-$requireEmail = false;
-$rangeFrom    = 0;
-$rangeTo      = 0;
+$requireEmail  = false;
+$verdictFilter = '';
+$rangeFrom     = 0;
+$rangeTo       = 0;
 
 foreach ($argv as $arg) {
     if (preg_match('/^--worker=(\d+)$/',        $arg, $m)) $workerIdx    = (int)$m[1];
@@ -1397,6 +1398,7 @@ foreach ($argv as $arg) {
     if (preg_match('/^--username=(.+)$/',        $arg, $m)) $singleUser   = trim($m[1]);
     if (preg_match('/^--from=(\d+)$/',           $arg, $m)) $rangeFrom    = (int)$m[1];
     if (preg_match('/^--to=(\d+)$/',             $arg, $m)) $rangeTo      = (int)$m[1];
+    if (preg_match('/^--verdict=(.+)$/',         $arg, $m)) $verdictFilter = trim($m[1]);
     if ($arg === '--stats')        $showStatsOnly = true;
     if ($arg === '--reanalyze')    $reanalyze      = true;
     if ($arg === '--require-email') $requireEmail  = true;
@@ -1466,6 +1468,10 @@ if (!$reanalyze) {
 }
 if ($requireEmail) {
     $eligibleCondition .= ' AND ' . trim(XPOZ_ELIGIBLE_HAS_EMAIL_SQL);
+}
+$allowedVerdicts = ['valid','suspicious','mismatch','insufficient_data'];
+if ($verdictFilter !== '' && in_array($verdictFilter, $allowedVerdicts, true)) {
+    $eligibleCondition .= " AND `validate_verdict` = " . $pdo->quote($verdictFilter);
 }
 $eligibleCondition .= " AND (`_rowid` % :tw) = :wi";
 

@@ -120,8 +120,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $limit     = max(0, (int)($_POST['limit'] ?? 0));
         $batchFrom = max(0, (int)($_POST['batch_from'] ?? 0));
         $batchTo   = max(0, (int)($_POST['batch_to'] ?? 0));
-        $reanalyze = !empty($_POST['reanalyze']);
+        $reanalyze    = !empty($_POST['reanalyze']);
         $requireEmail = !empty($_POST['require_email']);
+        $batchVerdict = trim($_POST['batch_verdict'] ?? '');
         $logFile      = xpoz_dashboard_log_file();
         $phpBin       = xpoz_dashboard_php_cli();
 
@@ -131,7 +132,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 . ' (или chown каталога проекта под пользователя веб-сервера).';
         } else {
             $marker = "\n" . date('c') . " [dashboard] batch: workers={$workers} limit={$limit} from={$batchFrom} to={$batchTo} reanalyze="
-                . ($reanalyze ? '1' : '0') . ' require_email=' . ($requireEmail ? '1' : '0') . "\n";
+                . ($reanalyze ? '1' : '0') . ' require_email=' . ($requireEmail ? '1' : '0')
+                . ' verdict=' . ($batchVerdict ?: 'all') . "\n";
             @file_put_contents($logFile, $marker, FILE_APPEND | LOCK_EX);
 
             $script = __DIR__ . '/xpoz_parser.php';
@@ -153,6 +155,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 if ($requireEmail) {
                     $args .= ' --require-email';
                 }
+                if ($batchVerdict !== '' && in_array($batchVerdict, ['valid','suspicious','mismatch','insufficient_data'], true)) {
+                    $args .= ' --verdict=' . escapeshellarg($batchVerdict);
+                }
                 $cmds[] = 'cd ' . escapeshellarg(__DIR__)
                     . ' && nohup ' . escapeshellarg($phpBin) . ' ' . escapeshellarg($script) . $args
                     . ' >> ' . escapeshellarg($logFile) . ' 2>&1 &';
@@ -160,9 +165,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             foreach ($cmds as $c) {
                 exec($c);
             }
-            $rangeInfo = ($batchFrom > 0 || $batchTo > 0) ? " (#{$batchFrom}–#{$batchTo})" : '';
-            $emailNote = $requireEmail ? ' Только Instagram со строкой email.' : '';
-            $flash = "Запущено {$workers} воркеров{$rangeInfo}.{$emailNote} Лог: " . basename($logFile);
+            $rangeInfo   = ($batchFrom > 0 || $batchTo > 0) ? " (#{$batchFrom}–#{$batchTo})" : '';
+            $emailNote   = $requireEmail ? ' Только Instagram со строкой email.' : '';
+            $verdictNote = $batchVerdict !== '' ? " Verdict={$batchVerdict}." : '';
+            $flash = "Запущено {$workers} воркеров{$rangeInfo}.{$emailNote}{$verdictNote} Лог: " . basename($logFile);
         }
     }
 
@@ -621,6 +627,16 @@ tr:hover td{background:#252a3a}
                 </div>
                 <div class="form-row">
                     <label title="Сайт, YouTube About, Twitter bio или Instagram bio (не NOT_FOUND/ошибки)"><input type="checkbox" name="require_email" value="1" checked style="margin-right:4px">Только со строкой email</label>
+                </div>
+                <div class="form-row">
+                    <label>Verdict</label>
+                    <select name="batch_verdict" style="background:#0f1117;border:1px solid #2d3148;border-radius:6px;padding:5px 10px;color:#e2e8f0;font-size:0.82rem;flex:1">
+                        <option value="">Все</option>
+                        <option value="valid">valid</option>
+                        <option value="suspicious">suspicious</option>
+                        <option value="mismatch">mismatch</option>
+                        <option value="insufficient_data">insufficient_data</option>
+                    </select>
                 </div>
                 <div class="form-row">
                     <label><input type="checkbox" name="reanalyze" style="margin-right:4px">Перезапуск</label>
