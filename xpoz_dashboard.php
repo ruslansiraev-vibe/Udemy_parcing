@@ -13,7 +13,7 @@ define('DB_PORT', 3306);
 define('DB_NAME', 'udemy_leads');
 define('DB_TABLE', 'leads_copy');
 define('DB_USER', 'root');
-define('DB_PASS', '');
+define('DB_PASS', 'oxyKrWTK4y');
 
 function getDb(): PDO
 {
@@ -405,6 +405,15 @@ if ($logTail === '') {
     }
 }
 
+$validPending = (int)$pdo->query("
+    SELECT COUNT(*) FROM `" . DB_TABLE . "`
+    WHERE `instagram_parcing` IS NOT NULL AND TRIM(`instagram_parcing`) != ''
+      AND `validate_email_match` = 'yes'
+      AND `validate_instagram_match` = 'yes'
+      AND `validate_verdict` = 'valid'
+      AND `xpoz_scraped` IS NULL
+")->fetchColumn();
+
 $progress = $stats['total_ig'] > 0 ? round($stats['scraped'] / $stats['total_ig'] * 100, 1) : 0;
 
 // ── URL helpers ──────────────────────────────────────────────────────────────
@@ -660,6 +669,29 @@ tr:hover td{background:#252a3a}
                 <button type="submit" class="btn btn-primary">Анализировать</button>
             </div>
         </form>
+
+        <div class="section-title" style="margin-top:20px">Спарсить Valid</div>
+        <?php if ($isRunning): ?>
+            <form method="POST" style="margin-bottom:8px">
+                <input type="hidden" name="action" value="stop_batch">
+                <button type="submit" class="btn btn-danger">Остановить все воркеры</button>
+            </form>
+        <?php else: ?>
+            <form method="POST" style="margin-bottom:16px" onsubmit="return confirm('Запустить парсинг <?= $nf($validPending) ?> valid-аккаунтов (email_match=yes + ig_match=yes + verdict=valid, ещё не спарсены)?')">
+                <input type="hidden" name="action" value="start_batch">
+                <input type="hidden" name="workers" value="5">
+                <input type="hidden" name="limit" value="0">
+                <input type="hidden" name="batch_from" value="0">
+                <input type="hidden" name="batch_to" value="0">
+                <input type="hidden" name="match_email" value="1">
+                <input type="hidden" name="match_ig" value="1">
+                <input type="hidden" name="batch_verdict" value="valid">
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <button type="submit" class="btn btn-green" style="padding:10px 20px;font-size:0.88rem">Спарсить valid (<?= $nf($validPending) ?> осталось)</button>
+                    <span style="font-size:0.72rem;color:#64748b">5 воркеров · email✅ + IG✅ + verdict=valid · пропускает уже спарсенные</span>
+                </div>
+            </form>
+        <?php endif; ?>
 
         <div class="section-title" style="margin-top:20px">Batch запуск</div>
         <?php if ($isRunning): ?>
